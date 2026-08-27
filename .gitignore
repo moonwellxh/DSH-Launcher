@@ -1,0 +1,11 @@
+# 系统/编辑器杂项
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.tmp
+
+# 解压产生的临时目录（如需保留源树请勿忽略；此处不忽略）
+# （仓库有意保留 dsh-launcher/ 与 dsh-launcher Add/<技能名>/ 源树便于浏览）
+
+# 本地记忆/工具等个人文件（如需入库请自行调整）
+*~
