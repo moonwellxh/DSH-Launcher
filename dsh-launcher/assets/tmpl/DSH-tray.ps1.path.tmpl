@@ -15,7 +15,10 @@ $launchBat = Join-Path $PSScriptRoot '启动DSH.bat'
 $upgradeDir = Join-Path $PSScriptRoot '升级'
 $npmLatestUrl = 'https://registry.npmjs.org/@deepseek-ai%2Fdsh/latest'
 $skillDir = Join-Path $env:USERPROFILE '.agents\skills\dsh-launcher'
-$skillHubZip = 'Z:\Date_Home\【MoonwelL】\【AI】\My skills\dsh-launcher__skillhub.zip'
+# ---- GitHub 同步（取代原 Z: 网络盘存档；Z 盘不再作为同步存档）----
+$ghRepo   = 'moonwellxh/DSH-Launcher'                       # GitHub 同步仓库（owner/repo）
+$ghBranch = 'main'                                          # 同步分支
+$ghCache  = Join-Path $env:USERPROFILE '.dsh\gh-sync\DSH-Launcher'   # 仓库工作副本缓存
 
 function Get-DshListenerPid {
     $c = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -369,11 +372,11 @@ function Build-UpgradeInstruction([string]$cur, [string]$latest) {
     $lbl.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
     $script:dialogResult = 'cancel'
     $bUp = New-Object System.Windows.Forms.Button
-    $bUp.Text = '上传本机版本'
+    $bUp.Text = '上传到 GitHub'
     $bUp.SetBounds(16, 152, 160, 38)
     $bUp.Add_Click({ $script:dialogResult = 'upload'; $f.Close() })
     $bPull = New-Object System.Windows.Forms.Button
-    $bPull.Text = '拉取服务器版本'
+    $bPull.Text = '拉取 GitHub 版本'
     $bPull.SetBounds(190, 152, 170, 38)
     $bPull.Add_Click({ $script:dialogResult = 'pull'; $f.Close() })
     $bCancel = New-Object System.Windows.Forms.Button
@@ -388,37 +391,35 @@ function Build-UpgradeInstruction([string]$cur, [string]$latest) {
     return $script:dialogResult
 }
 function Sync-LauncherScript {
-    # 一键启动脚本与服务器（Z: 技能库）双向同步：逐文件内容哈希比对（不信任缓存/版本号），方向按实际 _meta 时间戳判定
+    # 一键启动脚本与 GitHub（moonwellxh/DSH-Launcher）双向同步：
+    # 以仓库内解压源树 dsh-launcher/ 为比对对象，逐文件内容哈希比对（不信任缓存/版本号），
+    # 方向按双方实际 _meta.json 时间戳判定；上传前先 bump 本地时间戳，绝不自动覆盖远端良包
     $notify.ShowBalloonTip(2000, 'DSH 升级', '正在同步启动脚本…', 'Info')
     if (-not (Test-Path -LiteralPath $skillDir)) { throw "本机技能目录不存在：$skillDir" }
-    if (-not (Test-Path -LiteralPath 'Z:\')) { throw '服务器（Z: 网络盘）未连接，无法同步' }
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw '未找到 git：请先安装 Git（https://git-scm.com）并配置 GitHub 凭据（HTTPS 推荐 credential manager）' }
+    # git 全程非交互：缺凭据立即失败并提示，不在隐藏窗口里挂起等待输入
+    $env:GIT_TERMINAL_PROMPT = '0'
     $tmpZip = Join-Path $env:TEMP ("dsh-sync-" + [guid]::NewGuid().ToString('N') + '.zip')
-    $stage = Join-Path $env:TEMP ("dsh-sync-" + [guid]::NewGuid().ToString('N'))
-    # 加载 ZipFile 程序集（托盘默认不加载，必须在函数内自加载）
-    try { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop } catch {}
     try {
+        # 0) 同步 GitHub 仓库工作副本（~\.dsh\gh-sync\DSH-Launcher）
+        New-Item -ItemType Directory -Path (Split-Path $ghCache -Parent) -Force | Out-Null
+        if (-not (Test-Path -LiteralPath (Join-Path $ghCache '.git'))) {
+            git clone -b $ghBranch --depth 1 "https://github.com/$ghRepo.git" $ghCache
+            if ($LASTEXITCODE -ne 0) { throw "git clone 失败（exit $LASTEXITCODE）：请检查网络/代理与仓库地址 $ghRepo" }
+        } else {
+            git -C $ghCache fetch origin $ghBranch
+            if ($LASTEXITCODE -ne 0) { throw "git fetch 失败（exit $LASTEXITCODE）：请检查网络/代理与 GitHub 连通性" }
+            git -C $ghCache reset --hard "origin/$ghBranch"
+        }
+        $remoteBase = Join-Path $ghCache 'dsh-launcher'
+        if (-not (Test-Path -LiteralPath $remoteBase)) { throw 'GitHub 仓库缺少 dsh-launcher 源树目录（仓库结构异常）' }
         # 1) 本机技能目录内容清单（相对路径 → SHA256）
         $localMap = @{}
         Get-ChildItem -LiteralPath $skillDir -Recurse -File | ForEach-Object {
             $rel = $_.FullName.Substring($skillDir.Length + 1) -replace '\\','/'
             $localMap[$rel] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
         }
-        # 2) 服务器包：不存在 → 直接上传；存在 → 新鲜复制到本地再读（避免网络缓存）
-        if (-not (Test-Path -LiteralPath $skillHubZip)) {
-            & 'C:\Windows\System32\tar.exe' -a -cf $tmpZip -C (Split-Path $skillDir -Parent) 'dsh-launcher'
-            if ($LASTEXITCODE -ne 0) { throw "打包失败（exit $LASTEXITCODE）" }
-            Copy-Item -LiteralPath $tmpZip -Destination $skillHubZip -Force
-            $z = [System.IO.Compression.ZipFile]::OpenRead($skillHubZip); $z.Dispose()
-            $notify.ShowBalloonTip(3000, 'DSH 升级', '服务器上还没有启动脚本包，已上传本机版本。', 'Info')
-            return
-        }
-        Copy-Item -LiteralPath $skillHubZip -Destination $tmpZip -Force
-        try { $z = [System.IO.Compression.ZipFile]::OpenRead($tmpZip); $z.Dispose() } catch { throw "服务器上的压缩包损坏：$($_.Exception.Message)" }
-        New-Item -ItemType Directory -Path $stage -Force | Out-Null
-        & 'C:\Windows\System32\tar.exe' -xf $tmpZip -C $stage
-        if ($LASTEXITCODE -ne 0) { throw "解包失败（exit $LASTEXITCODE）" }
-        $remoteBase = Join-Path $stage 'dsh-launcher'
-        if (-not (Test-Path -LiteralPath $remoteBase)) { throw '服务器压缩包缺少 dsh-launcher 目录' }
+        # 2) GitHub 侧内容清单
         $remoteMap = @{}
         Get-ChildItem -LiteralPath $remoteBase -Recurse -File | ForEach-Object {
             $rel = $_.FullName.Substring($remoteBase.Length + 1) -replace '\\','/'
@@ -430,7 +431,7 @@ function Sync-LauncherScript {
             if ($localMap[$k] -ne $remoteMap[$k]) { $diff += $k }
         }
         if ($diff.Count -eq 0) {
-            $notify.ShowBalloonTip(3000, 'DSH 升级', '启动脚本与服务器完全一致，无需同步。', 'Info')
+            $notify.ShowBalloonTip(3000, 'DSH 升级', '启动脚本与 GitHub 完全一致，无需同步。', 'Info')
             return
         }
         # 4) 方向判定：读双方实际 _meta.json 时间戳（真实内容，非记忆值）
@@ -438,7 +439,7 @@ function Sync-LauncherScript {
         $rm = Get-Content -LiteralPath (Join-Path $remoteBase '_meta.json') -Raw | ConvertFrom-Json
         $lp = [long]$lm.publishedAt; $rp = [long]$rm.publishedAt
         if ($lp -eq $rp) {
-            # 时间戳相同但内容不同：按实际文件修改时间分析并给出建议，弹窗由用户确认方向（上传/拉取/取消）后才执行——绝不自动覆盖服务器良包
+            # 时间戳相同但内容不同：按实际文件修改时间分析并给出建议，弹窗由用户确认方向（上传/拉取/取消）后才执行——绝不自动覆盖 GitHub 良包
             $localNewer = $false; $remoteNewer = $false
             foreach ($k in $diff) {
                 $lf = Join-Path $skillDir ($k -replace '/','\')
@@ -449,23 +450,19 @@ function Sync-LauncherScript {
                 if ($localNewer -and $remoteNewer) { break }
             }
             $sug = '双向都有更新，无法自动判定，请人工确认合并方向'
-            if ($localNewer -and -not $remoteNewer) { $sug = '本机较新（推荐：上传本机版本到服务器）' }
-            elseif ($remoteNewer -and -not $localNewer) { $sug = '服务器较新（推荐：拉取服务器版本到本机）' }
+            if ($localNewer -and -not $remoteNewer) { $sug = '本机较新（推荐：上传本机版本到 GitHub）' }
+            elseif ($remoteNewer -and -not $localNewer) { $sug = 'GitHub 较新（推荐：拉取 GitHub 版本到本机）' }
             $showFiles = ($diff | Select-Object -First 5) -join '，'
             if ($diff.Count -gt 5) { $showFiles += ' 等' }
-            $dlg = "启动脚本：本地与服务器时间戳相同但内容不同（$($diff.Count) 个文件：$showFiles）。`n按实际修改时间分析：$sug。`n`n请选择同步方向（上传前会先备份服务器旧包）："
+            $dlg = "启动脚本：本机与 GitHub 时间戳相同但内容不同（$($diff.Count) 个文件：$showFiles）。`n按实际修改时间分析：$sug。`n`n请选择同步方向（上传会提交到 GitHub，git 历史会保留旧版本）："
             $dir = Show-SyncDirectionDialog $dlg
             if ($dir -eq 'upload') {
-                # 用户确认上传：备份服务器旧包 + bump _meta 时间戳（等效本地更新），随后走上传分支
-                try {
-                    $bakZip = Join-Path (Split-Path $skillHubZip -Parent) ("dsh-launcher__skillhub.bak-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.zip')
-                    Copy-Item -LiteralPath $skillHubZip -Destination $bakZip -Force
-                } catch {}
+                # 用户确认上传：bump _meta 时间戳（等效本地更新），随后走上传分支（旧版由 git 历史保留，无需手工备份）
                 $lm.publishedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
                 [System.IO.File]::WriteAllText((Join-Path $skillDir '_meta.json'), ($lm | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
                 $lp = [long]$lm.publishedAt
             } elseif ($dir -eq 'pull') {
-                # 用户确认拉取：等效服务器时间戳更大，随后走拉取分支
+                # 用户确认拉取：等效 GitHub 时间戳更大，随后走拉取分支
                 $rp = $lp + 1
             } else {
                 $notify.ShowBalloonTip(3000, 'DSH 升级', '已取消同步，未做任何更改。', 'Info')
@@ -473,16 +470,16 @@ function Sync-LauncherScript {
             }
         }
         if ($rp -gt $lp) {
-            # 兼容性检查：服务器上的启动器声明了兼容的 DSH 版本，本机不满足则提醒先升级 DSH，不更新
+            # 兼容性检查：GitHub 上的启动器声明了兼容的 DSH 版本，本机不满足则提醒先升级 DSH，不更新
             $curDsh = Get-CurrentDshVersion
             if ($rm.compatibleDsh) {
                 $compat = @($rm.compatibleDsh)
                 if ($curDsh -and ($compat -notcontains $curDsh)) {
-                    $notify.ShowBalloonTip(6000, 'DSH 升级', "服务器上的启动器要求 DSH $($compat -join ' / ')，当前为 $curDsh，请先升级 DSH 再同步。", 'Warning')
+                    $notify.ShowBalloonTip(6000, 'DSH 升级', "GitHub 上的启动器要求 DSH $($compat -join ' / ')，当前为 $curDsh，请先升级 DSH 再同步。", 'Warning')
                     return
                 }
             }
-            # 服务器新 → 更新本地技能目录
+            # GitHub 新 → 更新本地技能目录
             Get-ChildItem -LiteralPath $remoteBase -Recurse -File | ForEach-Object {
                 $dst = Join-Path $skillDir ($_.FullName.Substring($remoteBase.Length + 1))
                 New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
@@ -509,27 +506,51 @@ Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass',
 "@ | Set-Content -LiteralPath $helper -Encoding UTF8
                 # helper 自身也需 Bypass：Restricted 策略机器上 -File 直接跑临时 .ps1 会被拦
                 Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$helper) -WindowStyle Hidden
-                $notify.ShowBalloonTip(3000, 'DSH 升级', "已从服务器更新启动脚本（$($rm.version)），托盘即将重启。", 'Info')
+                $notify.ShowBalloonTip(3000, 'DSH 升级', "已从 GitHub 更新启动脚本（$($rm.version)），托盘即将重启。", 'Info')
                 [System.Windows.Forms.Application]::Exit()
             } else {
-                $notify.ShowBalloonTip(4000, 'DSH 升级', "已从服务器更新启动脚本（$($rm.version)），但新脚本解析失败，请手动重启托盘。", 'Error')
+                $notify.ShowBalloonTip(4000, 'DSH 升级', "已从 GitHub 更新启动脚本（$($rm.version)），但新脚本解析失败，请手动重启托盘。", 'Error')
             }
         } elseif ($lp -gt $rp) {
-            # 本地新 → 上传到服务器
-            & 'C:\Windows\System32\tar.exe' -a -cf $tmpZip -C (Split-Path $skillDir -Parent) 'dsh-launcher'
+            # 本地新 → 上传到 GitHub：更新源树 + 重打包 zip 到 releases\<版本>\ + git 提交推送
+            # 加载 ZipFile 程序集（托盘默认不加载，必须在函数内自加载）
+            try { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop } catch {}
+            # ① 同步源树 dsh-launcher/
+            $srcTree = Join-Path $ghCache 'dsh-launcher'
+            Get-ChildItem -LiteralPath $skillDir -Recurse -File | ForEach-Object {
+                $dst = Join-Path $srcTree ($_.FullName.Substring($skillDir.Length + 1))
+                New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
+                Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
+            }
+            Get-ChildItem -LiteralPath $srcTree -Recurse -File | ForEach-Object {
+                $rel = $_.FullName.Substring($srcTree.Length + 1) -replace '\\','/'
+                if (-not $localMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+            }
+            # ② 重打包 zip 到 releases\<版本>\（zip 集中归档目录，按版本分目录）
+            $releaseDir = Join-Path $ghCache ("releases\v" + $lm.version)
+            New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+            & 'C:\Windows\System32\tar.exe' -a -cf $tmpZip -C $ghCache 'dsh-launcher'
             if ($LASTEXITCODE -ne 0) { throw "打包失败（exit $LASTEXITCODE）" }
-            Copy-Item -LiteralPath $tmpZip -Destination $skillHubZip -Force
-            $z = [System.IO.Compression.ZipFile]::OpenRead($skillHubZip); $z.Dispose()
-            $h1 = (Get-FileHash -LiteralPath $tmpZip -Algorithm SHA256).Hash
-            $h2 = (Get-FileHash -LiteralPath $skillHubZip -Algorithm SHA256).Hash
-            if ($h1 -ne $h2) { throw '上传后校验不一致' }
-            $notify.ShowBalloonTip(3000, 'DSH 升级', "已将本机启动脚本上传到服务器（$($lm.version)）。", 'Info')
+            $relZip = Join-Path $releaseDir 'dsh-launcher__skillhub.zip'
+            Copy-Item -LiteralPath $tmpZip -Destination $relZip -Force
+            try { $z = [System.IO.Compression.ZipFile]::OpenRead($relZip); $z.Dispose() } catch { throw "打包校验失败：$($_.Exception.Message)" }
+            # ③ git 提交并推送（git 历史 = 旧版本天然备份，无需手工备份旧包）
+            git -C $ghCache add -A
+            if ($LASTEXITCODE -ne 0) { throw "git add 失败（exit $LASTEXITCODE）" }
+            if (-not (git -C $ghCache status --porcelain)) {
+                $notify.ShowBalloonTip(3000, 'DSH 升级', '内容已同步，无新变更需要推送。', 'Info')
+                return
+            }
+            git -C $ghCache commit -m "dsh-launcher v$($lm.version) 同步（$([DateTimeOffset]::Now.ToString('yyyy-MM-dd HH:mm'))）"
+            if ($LASTEXITCODE -ne 0) { throw "git commit 失败（exit $LASTEXITCODE）" }
+            git -C $ghCache push origin $ghBranch
+            if ($LASTEXITCODE -ne 0) { throw "git push 失败（exit $LASTEXITCODE）：请检查 GitHub 凭据（credential manager / SSH key）" }
+            $notify.ShowBalloonTip(3000, 'DSH 升级', "已将本机启动脚本上传到 GitHub（v$($lm.version)）。", 'Info')
         }
     } catch {
         $notify.ShowBalloonTip(5000, 'DSH 升级', "同步失败：$($_.Exception.Message)", 'Error')
     } finally {
         Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 function Start-DshServer {
@@ -653,7 +674,7 @@ $webTimer.Start()
 
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-# 顶部分隔线上方三行：DSH 现有版本（加粗）/ 最新版本（可更新可点）/ 一键同步启动脚本（点击与服务器同步）
+# 顶部分隔线上方三行：DSH 现有版本（加粗）/ 最新版本（可更新可点）/ 一键同步启动脚本（点击与 GitHub 同步）
 $miCur = New-Object System.Windows.Forms.ToolStripMenuItem
 $miCur.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
 $miCur.Text = "DSH 版本 $(Get-CurrentDshVersion)"
@@ -731,7 +752,7 @@ $verCheckTimer.Add_Tick({
 })
 $verCheckTimer.Start()
 
-# 顶部三行点击：最新版本→DSH 升级（弹窗确认后提交）；脚本版本→与服务器双向同步
+# 顶部三行点击：最新版本→DSH 升级（弹窗确认后提交）；脚本版本→与 GitHub 双向同步
 $miLatest.Add_Click({
     if (-not $script:newerAvail) { return }
     try {

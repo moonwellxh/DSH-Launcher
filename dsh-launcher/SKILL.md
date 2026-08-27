@@ -89,7 +89,7 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 | `启动DSH.bat` | 菜单启动器（1 托盘+Web / 2 TUI / 3 Headless / 0 退出） |
 | `启动DSH-托盘.cmd` | 一键托盘（跳过菜单，直接启动 + 开浏览器；**已自隐藏窗口**：首次进入经 `run-hidden.vbs` 隐藏重入，双击不再闪命令行窗口） |
 | `启动DSH-托盘.vbs` | 一键托盘（**零命令行窗口**，wscript 直启 DSH-tray.ps1，推荐双击入口；配套 `run-hidden.vbs` 供 .cmd 自隐藏重入） |
-| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「一键同步启动脚本 x.x.x」（点击**与服务器双向同步**：逐文件 SHA256 内容比对，方向按双方实际 `_meta.json` 时间戳判定——服务器新则更新本地并重跑 setup 后自动重启托盘，本地新则打包上传并校验，一致则跳过，时间戳相同但内容不同则按文件修改时间分析并弹窗展示分析/建议，由用户确认方向（上传本机/拉取服务器/取消）后才执行（上传前先备份服务器旧包；绝不自动覆盖）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
+| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「一键同步启动脚本 x.x.x」（点击**与 GitHub 双向同步**：以仓库源树 `dsh-launcher/` 为比对对象逐文件 SHA256 内容比对，方向按双方实际 `_meta.json` 时间戳判定——GitHub 新则更新本地并重跑 setup 后自动重启托盘，本地新则更新源树 + 重打包 zip 到 `releases\<版本>\` + git 提交推送并校验，一致则跳过，时间戳相同但内容不同则按文件修改时间分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
 | `dsh.cmd` | CLI 入口包装（`--version` / TUI / Headless） |
 | `whale-white.ico` / `whale-white.png` | 托盘图标（默认，白色描边鲸鱼版，镂空填白/下半白底） |
 | `tray.ico` / `whale.ico` | 备用图标（自动回退） |
@@ -125,7 +125,11 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
   含本技能全部编码约定与踩坑记录），动手前对照编码表，不要等出乱码再查。
 - **冷启动**：源码树模式优先用已构建的 `apps\cli\lib\bin.js`（免 tsx，约 4s），
 - **0xc0000142（cmd/node 偶发"应用程序无法正常启动"）**：DLL 初始化失败的瞬时现象，多为**快速连续拉起多个进程**（或系统瞬时状态/其他安全软件扫描）触发，非持续故障。处理：避免密集拉进程；托盘版本读取已改为直接读 package.json（免 node 进程）；如频繁出现再排查系统 DLL/安全软件。- **快捷方式图标不更新**：`.lnk` 指向的 `.ico` 文件本身没问题时，是 Windows 图标缓存未刷新。解决顺序：先 `ie4uinit.exe -show`；仍不更新则结束 Explorer（`taskkill /f /im explorer.exe`）→ 删除 `%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache_*.db` → 重启 Explorer（`start explorer.exe`）。
-- **Z: 归档同步（同步守卫）**：Z: 为 NAS 映射盘（RaiDrive/Synology），掉线/断连会导致写盘不完整（zip 损坏）或读到旧缓存。**覆盖前必须做内容级比对，不能只比版本号**：解包远端 zip，将其**条目列表与逐文件哈希**与本机比对。**只要远端与本机内容不同（远端多/少/改文件），即停止并提示「远端与本机内容不一致，需人工确认合并方向」，绝不覆盖**（版本号不可靠：远端可能版本号更低但内容更丰富）。确认为同内容后才写入；写盘后按 `zip-archive-ops` 校验。打包/修复完整流程见 `zip-archive-ops` 技能。
+- **GitHub 同步（同步守卫）**：托盘「一键同步」以仓库源树 `dsh-launcher/` 为比对对象，逐文件
+  **SHA256 内容级比对（不信任缓存/版本号）**，方向按双方实际 `_meta.json` 时间戳判定；时间戳相同
+  但内容不同时按文件修改时间分析并弹窗由用户确认方向（上传/拉取/取消），**绝不自动覆盖远端良包**。
+  上传 = git 提交推送（git 历史保留旧版，无需手工备份旧包）；写 zip 后按 `zip-archive-ops` 校验。
+  打包/修复流程见 `zip-archive-ops` 技能。
   避免 `--import tsx/esm apps/cli/src/bin.ts` 的约 20s 现场编译。
 
 ## 关键原理（排障补记 2026-08-21）
@@ -250,7 +254,8 @@ DSH 前端是 client-plugin 图（index.html 的 `__DSH_BOOT__` 指向带 rev �
 重载才正确。给其他机器升级时的标准说法与同类情况清单见
 `assets\升级后重新渲染-标准说法.md`。
 
-Z: 归档是各台机器修改的合集，最新版在 `dsh-launcher__skillhub.zip`。已在用的机器按下面规则对齐：
+GitHub 仓库（`moonwellxh/DSH-Launcher`，main 分支）是各台机器修改的合集；仓库内**解压源树 `dsh-launcher/` 为维护对象**，
+zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按目录留档）。已在用的机器按下面规则对齐：
 
 | 本次改了什么 | 已装机器要做的 |
 |---|---|
@@ -262,30 +267,33 @@ Z: 归档是各台机器修改的合集，最新版在 `dsh-launcher__skillhub.z
 原因：真正运行的是 `setup.ps1` 生成的脚本（`dsh.cmd`、`DSH-tray.ps1`、`启动DSH.bat` 等），
 光更新技能不会刷新这些生成物；`setup.ps1` 幂等，可安全重复执行。
 
-合并多台机器的修改时：以 Z: 归档为准逐文件比对，凡「Z: 有而本地无」或「两边不同」的文件，
-以 Z: 为准并入本地，再统一重打包回 Z:。
+合并多台机器的修改时：以 GitHub 仓库为准逐文件比对，凡「GitHub 有而本地无」或「两边不同」的文件，
+以 GitHub 为准并入本地，再 git commit + push 回 GitHub（托盘右键「一键同步启动脚本」可自动完成双向同步）。
 
 ## 兼容性列表（适配关系，修改技能/补丁时必须同步维护）
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
-| dsh-launcher（一键启动本体） | 1.1.64 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘所用 RPC 在两版均存在；`_meta.json` 的 `compatibleDsh` 字段同步维护；1.1.48 起配套技能版本比较改为「版本号优先、时间戳兜底」；1.1.51 完成 P0-P2 全面修复（补丁引擎 $LASTEXITCODE 陷阱/还原 enabled、托盘重启链编码、更新安装.cmd 降级等）；1.1.52 修复还原失败时 manifest 丢失成功项的回归 + 文档验证口径同步；1.1.53-57 托盘双击/「打开 Web UI」优先打开已装 PWA 主应用（SC_RESTORE 聚焦 + IsZoomed 最大化保护 + 未装引导式安装）；1.1.58 固化调试纪律铁律（绝不在运行中生成物上直接编辑，改模板→重新生成→验证→重启，先备份良包）；1.1.59 「重启 DSH」改版：杀 web + 按标题关闭 DSH 浏览器窗口（CloseDshWindows，WM_CLOSE 优雅关闭，不碰其他窗口）+ helper 接力重启托盘（-OpenBrowser 就绪后自动重开 PWA），所有 Start-Process powershell 统一加结尾 -WindowStyle Hidden 消除命令行窗口闪现；1.1.60 修复托盘右键「最新版本」查询失败：PS5.1 默认 TLS 非 1.2 + 系统代理（Clash 7897）对 npm HTTPS 转发不可靠 → Get-LatestDshInfo 强制 TLS1.2 + 优先直连（WebClient.Proxy=$null）、失败回退系统代理；1.1.61 一键托盘入口全面去闪烁：`启动DSH-托盘.cmd` 顶部加自隐藏包装（`run-hidden.vbs` 经 wscript 以隐藏窗口重入，`__DSH_HIDDEN` 标记防重入），新增零窗口双击入口 `启动DSH-托盘.vbs`（wscript 直启隐藏 powershell），setup.ps1 部署新 vbs 并更新产物清单；1.1.62 托盘右键第三行文案优化：「一键启动脚本版本」→「一键同步启动脚本」（模板/文档/生成物同步；内容变更同步 bump _meta 版本时间戳，避免同步误判人工复核）；1.1.64 同步冲突处理（用户确认制）：时间戳相同但内容不同时，按实际文件修改时间分析并弹窗展示分析/建议，由用户确认方向（上传本机/拉取服务器/取消）后才执行——上传前先备份服务器旧包，绝不自动覆盖良包 |
+| dsh-launcher（一键启动本体） | 1.1.65 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘所用 RPC 在两版均存在；`_meta.json` 的 `compatibleDsh` 字段同步维护；1.1.48 起配套技能版本比较改为「版本号优先、时间戳兜底」；1.1.51 完成 P0-P2 全面修复（补丁引擎 $LASTEXITCODE 陷阱/还原 enabled、托盘重启链编码、更新安装.cmd 降级等）；1.1.52 修复还原失败时 manifest 丢失成功项的回归 + 文档验证口径同步；1.1.53-57 托盘双击/「打开 Web UI」优先打开已装 PWA 主应用（SC_RESTORE 聚焦 + IsZoomed 最大化保护 + 未装引导式安装）；1.1.58 固化调试纪律铁律（绝不在运行中生成物上直接编辑，改模板→重新生成→验证→重启，先备份良包）；1.1.59 「重启 DSH」改版：杀 web + 按标题关闭 DSH 浏览器窗口（CloseDshWindows，WM_CLOSE 优雅关闭，不碰其他窗口）+ helper 接力重启托盘（-OpenBrowser 就绪后自动重开 PWA），所有 Start-Process powershell 统一加结尾 -WindowStyle Hidden 消除命令行窗口闪现；1.1.60 修复托盘右键「最新版本」查询失败：PS5.1 默认 TLS 非 1.2 + 系统代理（Clash 7897）对 npm HTTPS 转发不可靠 → Get-LatestDshInfo 强制 TLS1.2 + 优先直连（WebClient.Proxy=$null）、失败回退系统代理；1.1.61 一键托盘入口全面去闪烁：`启动DSH-托盘.cmd` 顶部加自隐藏包装（`run-hidden.vbs` 经 wscript 以隐藏窗口重入，`__DSH_HIDDEN` 标记防重入），新增零窗口双击入口 `启动DSH-托盘.vbs`（wscript 直启隐藏 powershell），setup.ps1 部署新 vbs 并更新产物清单；1.1.62 托盘右键第三行文案优化：「一键启动脚本版本」→「一键同步启动脚本」（模板/文档/生成物同步；内容变更同步 bump _meta 版本时间戳，避免同步误判人工复核）；1.1.64 同步冲突处理（用户确认制）：时间戳相同但内容不同时，按实际文件修改时间分析并弹窗展示分析/建议，由用户确认方向（上传/拉取/取消）后才执行，绝不自动覆盖良包；1.1.65 同步存档全面切换 GitHub：弃用 Z: 网络盘（NAS）存档，托盘「一键同步」改为 git 双向同步 `moonwellxh/DSH-Launcher`（clone/fetch 工作副本 `~\.dsh\gh-sync\DSH-Launcher`，逐文件 SHA256 比对逻辑不变；上传=更新源树 + 重打包 zip 到 `releases\<版本>\` + git add/commit/push，git 历史天然备份旧版，不再手工备份旧包；拉取=与仓库源树比对后应用并重跑 setup；git 全程非交互 GIT_TERMINAL_PROMPT=0，缺凭据立即报错） |
 | 档案柜 v1 补丁 | 0.1.1 | **仅 0.1.1-rc.2** | 载荷绑定版本；清单 `compatibleDsh` 字段校验 |
 
 **兼容性检查规则（防冲突）**：
 - **补丁引擎**：应用每个补丁前，读取清单 `compatibleDsh`，与本机当前 DSH 版本（读
   profile `@deepseek-ai/dsh/package.json`）比对；**不匹配 → 跳过 + 提醒**（"请先升级
   DSH 到 X，或将补丁适配到当前版本"），绝不硬装。
-- **托盘同步**（右键第三行）：服务器上的启动器若声明了 `compatibleDsh` 且本机 DSH
+- **托盘同步**（右键第三行）：GitHub 上的启动器若声明了 `compatibleDsh` 且本机 DSH
   不在其列 → **提醒先升级 DSH，不更新本地**。
 - **修改适配规则**：技能/补丁适配了新 DSH 版本后，必须同时更新：本表、
   `_meta.json`（启动器）或清单（补丁）的 `compatibleDsh` 字段。
 - **旧 DSH 上不要手动强装**新适配的补丁/脚本（2026-08-23 事故教训）。
 
-## 修改与分发规则
+## 修改与分发规则（同步目标：GitHub，已弃用 Z: 网络盘存档）
 
-安装/修改/更新本技能后，打包 zip（根目录 = 技能名 `dsh-launcher`）同步到
-`Z:\Date_Home\【MoonwelL】\【AI】\My skills\dsh-launcher__skillhub.zip`。
+安装/修改/更新本技能后，维护仓库内**解压源树 `dsh-launcher/`**（本技能目录），并把新 zip
+（根目录 = 技能名 `dsh-launcher`）归档到 GitHub 仓库 `releases\<版本>\dsh-launcher__skillhub.zip`
+（如 `releases/v1.1.65/`），随后 git commit + push。托盘右键「一键同步启动脚本」可自动完成
+「源树更新 + 重打包 zip 到 releases\<版本>\ + 提交推送」；**大版本更新前，当前版本的内容已按
+版本目录留档在 `releases\v<旧版本>\`**（git 历史也是天然备份）。
 
 ### 配套技能清单与维护（必须同步，缺一不可）
 
@@ -294,21 +302,21 @@ Z: 归档是各台机器修改的合集，最新版在 `dsh-launcher__skillhub.z
 `skill-install-ops`（安装运维规范，自带版本号与自动进化机制，见其 SKILL.md）。
 
 **每次修改任一配套技能，三连同步**：
-1. 打包 `xxx__skillhub.zip`（根目录=技能名）同步到
-   `Z:\...\My skills\dsh-launcher Add\`（**配套包专用子目录**）；
+1. 打包 `xxx__skillhub.zip`（根目录=技能名）同步到 GitHub 仓库
+   `releases\<当前版本>\`（与主包同目录归档）＋ 仓库内配套源树 `dsh-launcher Add\<技能名>\`；
 2. 把新 zip 复制进本技能 `assets\配套技能\`（覆盖旧包）；
-3. 重打包 `dsh-launcher__skillhub.zip` 同步到 `Z:\...\My skills\` **根目录**
-   （主包仍放根目录；setup.ps1 按时间戳自动分发新版）。
+3. 重打包 `dsh-launcher__skillhub.zip` 到 `releases\<当前版本>\`，git commit + push
+   （setup.ps1 按时间戳自动分发新版）。
 
 **以后新增脚本技能**（成为一键启动配套的通用规则）：
 1. 建好技能（SKILL.md + _meta.json，编码/结构遵守 charset-pitfalls 技能）；
-2. 打包 `xxx__skillhub.zip`（根目录=技能名），同步到
-   `Z:\...\My skills\dsh-launcher Add\`（配套包专用子目录）；
+2. 打包 `xxx__skillhub.zip`（根目录=技能名），归档到 GitHub `releases\<当前版本>\`，
+   并把源树放进 `dsh-launcher Add\<技能名>\`；
 3. 把该 zip 复制进 `dsh-launcher\assets\配套技能\`（setup.ps1 自动扫描该目录下所有
    `*__skillhub.zip`，无需改 setup.ps1）；
-4. 重打包并同步 `dsh-launcher__skillhub.zip`，并把新技能名登记进本清单。
+4. 重打包并同步 `dsh-launcher__skillhub.zip`（`releases\<当前版本>\`），并把新技能名登记进本清单。
 
-**与 launcher 无关的技能**：zip 仍放 `Z:\...\My skills\` 根目录，不进 `dsh-launcher Add\`。
+**与 launcher 无关的技能**：zip 不进入本仓库的 releases 配套归档，独立管理。
 
 **归档定位铁律（2026-08-24 用户明确，2026-08-24 修订：用户最终拍板）**：技能是否进
 launcher 配套，**最终由用户定义**。AI 只能做预判断（一键启动相关通用运维技能 vs

@@ -59,7 +59,8 @@ DSH 重装 / 升级导致补丁失效后，双击 `重打全部补丁.bat`（或
 3. 还原脚本调用 `Restore-AllBackups`（按备份清单还原，补丁新增文件会被删除）。
 4. 在 `自动载入清单-manifest.json` 的 `patches` 里登记（`enabled: true`）。
 5. 本机双击 `重打全部补丁.bat` 验证；改完把 `补丁管理\` 同步到
-   dsh-launcher 技能 `assets\补丁管理\`，并按技能规则重打包 zip 同步到 Z:。
+   dsh-launcher 技能 `assets\补丁管理\`，并按技能规则重打包 zip 归档到 GitHub
+   `releases\<当前版本>\`（git commit + push；已弃用 Z: 盘存档）。
 
 ## 备份与还原
 

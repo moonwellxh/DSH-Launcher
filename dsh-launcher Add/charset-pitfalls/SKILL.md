@@ -31,11 +31,11 @@ description: >
 `assets\配套技能\`，安装一键启动时会自动装上本技能。
 
 **修改本技能后，三连同步（缺一不可）**：
-1. 打包 `charset-pitfalls__skillhub.zip`（根目录=技能名）同步到
-   `Z:\Date_Home\【MoonwelL】\【AI】\My skills\dsh-launcher Add\`（配套包专用子目录）；
+1. 打包 `charset-pitfalls__skillhub.zip`（根目录=技能名）归档到 GitHub 仓库
+   `releases\<当前版本>\`（zip 集中归档目录）＋更新配套源树 `dsh-launcher Add\charset-pitfalls\`；
 2. 把新 zip 复制进 `dsh-launcher\assets\配套技能\`（覆盖旧包）；
-3. 重打包 `dsh-launcher__skillhub.zip` 同步到 `Z:\...\My skills\` 根目录（主包仍放根目录，
-   setup.ps1 按时间戳自动分发新版）。
+3. 重打包 `dsh-launcher__skillhub.zip` 到 `releases\<当前版本>\` 并 git commit + push
+   （setup.ps1 按时间戳自动分发新版；已弃用 Z: 盘存档）。
 
 本技能是本机长期踩坑经验的**唯一汇总地**。任何涉及中文文本、文件编码、脚本解析、
 网络传输中文的场景，先对照本清单，避免重复踩坑。

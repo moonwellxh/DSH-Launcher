@@ -70,7 +70,8 @@ description: |
 
 1. 把安装中踩的坑和最终路径**写回技能文档**（环境表、troubleshooting），让下次安装有据可查。
 2. 向用户报告：装了哪些环境、检测四层各几条 PASS、文档改了哪里、还剩什么条件才能用（如 AutoCAD/天正需运行）。
-3. 涉及 `__skillhub.zip` 分发的：重打包同步到 `Z:\Date_Home\【MoonwelL】\【AI】\My skills\`（根目录放主包，配套包放 `dsh-launcher Add\`）。
+3. 涉及 `__skillhub.zip` 分发的：重打包归档到 GitHub 仓库
+   `releases\<当前版本>\`（zip 集中归档目录；已弃用 Z: 盘存档）。
 
 **归档定位铁律（2026-08-24 用户明确，2026-08-24 修订：用户最终拍板）**：技能是否进
 `dsh-launcher` 配套（`assets\配套技能\` + `dsh-launcher Add\` + 主包内嵌三处同步），
@@ -92,10 +93,10 @@ description: |
 1. `_meta.json` 的 `version` **递增**（如 1.1.0 → 1.1.1）+ `publishedAt` 更新为当前
    毫秒时间戳（setup.ps1 靠它判定"包内更新则重装"，时间戳不更新 = 已装机器不会收到
    新内容）；
-2. 打包 `skill-install-ops__skillhub.zip` 同步到
-   `Z:\...\My skills\dsh-launcher Add\`（配套包专用子目录）；
+2. 打包 `skill-install-ops__skillhub.zip` 归档到 GitHub 仓库
+   `releases\<当前版本>\`（zip 集中归档目录）＋更新配套源树 `dsh-launcher Add\skill-install-ops\`；
 3. 复制进 `dsh-launcher\assets\配套技能\` 覆盖旧包，重打包
-   `dsh-launcher__skillhub.zip` 同步到 `Z:\...\My skills\` 根目录。
+   `dsh-launcher__skillhub.zip` 到 `releases\<当前版本>\` 并 git commit + push。
 
 **版本号防误覆盖**：任何一次进化都**必须升 `_meta.json` 的 `version`**（语义化：
 主.次.补丁），并在下方「版本历史」追加一行（版本 / 日期 / 变更内容）。**禁止**只改

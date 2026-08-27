@@ -19,11 +19,11 @@ description: >
 `assets\配套技能\`，安装一键启动时会自动装上本技能。
 
 **修改本技能后，三连同步（缺一不可）**：
-1. 打包 `zip-archive-ops__skillhub.zip`（根目录=技能名）同步到
-   `Z:\Date_Home\【MoonwelL】\【AI】\My skills\dsh-launcher Add\`（配套包专用子目录）；
+1. 打包 `zip-archive-ops__skillhub.zip`（根目录=技能名）归档到 GitHub 仓库
+   `releases\<当前版本>\`（zip 集中归档目录）＋更新配套源树 `dsh-launcher Add\zip-archive-ops\`；
 2. 把新 zip 复制进 `dsh-launcher\assets\配套技能\`（覆盖旧包）；
-3. 重打包 `dsh-launcher__skillhub.zip` 同步到 `Z:\...\My skills\` 根目录（主包仍放根目录，
-   setup.ps1 按时间戳自动分发新版）。
+3. 重打包 `dsh-launcher__skillhub.zip` 到 `releases\<当前版本>\` 并 git commit + push
+   （setup.ps1 按时间戳自动分发新版；已弃用 Z: 盘存档）。
 
 ## 何时使用
 
@@ -77,7 +77,7 @@ C:\Windows\System32\tar.exe -xf "<损坏.zip>" -C "<目标目录>"
 ```
 
 > ⚠️ 用 `C:\Windows\System32\tar.exe`，**不要用 Git 的 `/usr/bin/tar`（MSYS2）**——
-> 后者不识别 Windows 盘符（报 "Cannot connect to Z:" 之类）。
+> 后者不识别 Windows 盘符（报 "Cannot connect to C:/Z:" 之类）。
 
 ## 五、经验清单
 
@@ -91,6 +91,7 @@ C:\Windows\System32\tar.exe -xf "<损坏.zip>" -C "<目标目录>"
 
 ## 分发规则
 
-本技能更新后，打包 zip（根目录 = 技能名）同步到
-`Z:\Date_Home\【MoonwelL】\【AI】\My skills\dsh-launcher Add\zip-archive-ops__skillhub.zip`
-（**配套包专用子目录**；与 launcher 无关的技能包放 `My skills\` 根目录）。
+本技能更新后，打包 zip（根目录 = 技能名）归档到 GitHub 仓库
+`releases\<当前版本>\zip-archive-ops__skillhub.zip`
+（zip 集中归档目录；并更新配套源树 `dsh-launcher Add\zip-archive-ops\`，与 launcher
+无关的技能包不进入 releases 配套归档，独立管理）。

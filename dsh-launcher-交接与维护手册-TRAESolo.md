@@ -2,7 +2,7 @@
 
 > **一份文档 = 资产交接清单 + 可执行维护操作手册（已合并去重）。**
 > 权威原理/流程：`C:\Users\雍远\.agents\skills\dsh-launcher\SKILL.md`（**动手前先读**）。
-> 本文为 2026-08-27 当日实测快照 + 可复制命令；执行前先核对第 2、3 节实测值，不凭记忆。
+> 本文为 2026-08-28 实测快照（1.1.65，GitHub 同步版）+ 可复制命令；执行前先核对第 2、3 节实测值，不凭记忆。
 
 ---
 
@@ -28,9 +28,10 @@
 | Python | `C:\Users\雍远\.workbuddy\binaries\python\versions\3.13.12\python.exe` |
 | 系统代理 | `127.0.0.1:7897`（Clash Verge mixed-port） |
 | Web GUI | `http://127.0.0.1:3080` |
-| Z 盘 skills 目录 | `Z:\Date_Home\【MoonwelL】\【AI】\My skills` |
-| Z 盘归档主包 | `Z:\Date_Home\【MoonwelL】\【AI】\My skills\dsh-launcher__skillhub.zip` |
-| Z 盘历史备份 | `Z:\Date_Home\【MoonwelL】\【AI】\My skills\old\` |
+| Z 盘 skills 目录 | ~~`Z:\Date_Home\【MoonwelL】\【AI】\My skills`~~（**已弃用**，不再作为同步存档） |
+| GitHub 同步仓库 | `https://github.com/moonwellxh/DSH-Launcher`（main 分支，**现同步目标**） |
+| GitHub 工作副本（本机缓存） | `C:\Users\雍远\.dsh\gh-sync\DSH-Launcher` |
+| GitHub 发布包归档 | 仓库 `releases\v<版本>\`（zip 集中目录，历史版本按目录留档） |
 | 补丁备份根 | `C:\Users\雍远\.dsh\patches-backup\<补丁id>\` |
 | 本机跨任务记忆 | `D:\DSHS\_记忆\通用记忆.md`（主）+ `路径速查.md`（别名） |
 
@@ -40,15 +41,15 @@
 
 | 资产 | 位置 | 版本 |
 |---|---|---|
-| 技能本体（AI 会话加载） | `C:\Users\雍远\.agents\skills\dsh-launcher\` | **1.1.64** |
-| 技能副本（就地安装工作区） | `D:\DSHS\`（同时是启动器安装目录） | **1.1.64** |
-| Z 盘归档主包 | `Z:\...\My skills\dsh-launcher__skillhub.zip` | **1.1.64** |
-| Z 盘历史备份 | `Z:\...\My skills\old\` | 1.1.57 / 1.1.58 / 1.1.59（`-OK.bak.zip`） |
+| 技能本体（AI 会话加载） | `C:\Users\雍远\.agents\skills\dsh-launcher\` | **1.1.65** |
+| 技能副本（就地安装工作区） | `D:\DSHS\`（同时是启动器安装目录） | **1.1.65** |
+| GitHub 发布包 | 仓库 `releases\v1.1.65\dsh-launcher__skillhub.zip` | **1.1.65** |
+| GitHub 历史归档 | 仓库 `releases\v<旧版本>\`（按版本目录留档） | 1.1.64 及更早（git 历史亦保留） |
 | 配套技能（4 个，内嵌于主包 `assets\配套技能\`） | 见第 8 节 | 见第 8 节 |
 | DSH 本体 | 源码树 `C:\Users\雍远\deepseek-harness\` | **0.1.1-rc.2** |
 
-**同步状态（2026-08-27 实测）**：技能本体 ↔ D:\DSHS 副本关键文件 SHA256 一致；Z 盘主包内版本 =
-本机版本 = **1.1.64**，三处同步 ✅。
+**同步状态（2026-08-28 实测）**：技能本体 ↔ D:\DSHS 副本关键文件 SHA256 一致；GitHub 仓库
+源树/`releases\v1.1.65\` 与本机一致 = 1.1.65。**同步存档已从 Z: 盘全面切换为 GitHub**。
 
 ---
 
@@ -58,19 +59,20 @@
 
 | 位置 | 版本 |
 |---|---|
-| 技能本体 `_meta.json` | **1.1.64**（publishedAt 1787837721722） |
-| 安装目录 `D:\DSHS\launcher.version` | **1.1.64** |
-| Z 盘主包（zip 内 `_meta.json`） | **1.1.64** |
+| 技能本体 `_meta.json` | **1.1.65**（publishedAt 1787854252769） |
+| 安装目录 `D:\DSHS\launcher.version` | **1.1.65** |
+| GitHub 仓库（源树 + `releases\v1.1.65\`） | **1.1.65** |
 | DSH 本体 | **0.1.1-rc.2**（源码树模式） |
 | 补丁 `dsh-recycle-bin-v1` | `enabled=true`，兼容 0.1.1-rc.2 ✅，**已应用** |
 | 生成产物 | `dsh.cmd`（GBK+chcp936）、`DSH-tray.ps1`（UTF-8 BOM）、`启动DSH.bat`、`启动DSH-托盘.vbs/.cmd`、`run-hidden.vbs` |
 | 运行状态 | 托盘与 web(3080) 正常；`dsh-web.log` / `dsh-web.err.log` 在 `D:\DSHS\` |
 
-**1.1.60 → 1.1.64 之间发生了什么**（D:\DSHS 留有 `DSH-tray.ps1.bak-20260827-*` 备份）：
+**1.1.60 → 1.1.65 之间发生了什么**（D:\DSHS 留有 `DSH-tray.ps1.bak-20260827-*` 备份）：
 
 - **1.1.61**：一键托盘入口全面去闪烁——`启动DSH-托盘.cmd` 顶部自隐藏包装（`run-hidden.vbs` 隐藏重入，`__DSH_HIDDEN` 防重入）；新增零窗口双击入口 `启动DSH-托盘.vbs`。
 - **1.1.62**：托盘右键第三行文案「一键启动脚本版本」→「一键同步启动脚本」。
 - **1.1.64**：同步冲突处理（用户确认制）——时间戳相同但内容不同时，按文件修改时间分析并弹窗展示分析/建议，由用户确认方向（上传/拉取/取消）后才执行；上传前先备份服务器旧包，绝不自动覆盖良包。测试脚本 `D:\DSHS\_tools\dsh-sync-confirm-test.ps1`。
+- **1.1.65**：**同步存档全面切换 GitHub**——弃用 Z: 网络盘（NAS）存档；托盘「一键同步」改为 git 双向同步 `moonwellxh/DSH-Launcher`（工作副本 `~\.dsh\gh-sync\DSH-Launcher`）：拉取=与仓库源树 `dsh-launcher/` SHA256 比对后应用并重跑 setup；上传=更新源树 + 重打包 zip 到 `releases\<版本>\` + git add/commit/push（git 历史天然备份旧版，不再手工备份旧包）。git 全程非交互（`GIT_TERMINAL_PROMPT=0`），缺凭据立即报错。
 
 ---
 
@@ -115,7 +117,7 @@
 1. **只改模板/源 → setup.ps1 重新生成 → 语法验证 → 备份 → 重启托盘**。绝不直接编辑运行中的生成物（08-25 事故：差点全盘瘫痪）。
 2. **编码**：`.cmd/.bat` = GBK + CRLF、无 BOM；`.ps1` 含中文 = **UTF-8 带 BOM**；`.md/.json/.txt` = UTF-8 无 BOM。
 3. **改内容必升版本**：`_meta.json` 的 `version` + `publishedAt` 一起动；禁止只改内容不升版本（同步误判"时间戳相同内容不同"→人工复核，多机合并无法辨新旧）。
-4. **绝不自动覆盖 Z: 良包**：覆盖前内容级比对；时间戳相同但内容不同时，托盘弹窗由用户拍板（1.1.64 起）。
+4. **绝不自动覆盖远端良包**：覆盖前内容级比对；时间戳相同但内容不同时，托盘弹窗由用户拍板（1.1.64 起；1.1.65 起远端=GitHub，git 历史保留旧版）。
 5. **脚本内部调用一律绝对路径**，禁止裸命令名（cmd 当前目录优先于 PATH 的劫持陷阱，08-23 托盘 15s 循环事故）。
 6. **补丁绑定 DSH 版本**：DSH 升级前必须先挂起所有补丁（manifest `enabled=false`），否则旧载荷覆盖新版包 → 前端渲染故障（08-23 事故）。
 
@@ -129,7 +131,7 @@
 - 关闭：托盘右键 →「退出并停止 DSH」（`taskkill /PID <3080监听PID> /T /F` 停整棵进程树）。
 - 菜单：`启动DSH.bat`（1 托盘+Web / 2 TUI / 3 Headless / 0 退出）。
 - 托盘右键顶部三行：DSH 版本（点开 deepseekdocs.com）/ 最新版本（可更新时点升级）/
-  「一键同步启动脚本」（与服务器双向同步，SHA256 内容级比对，冲突时用户确认制）。
+  「一键同步启动脚本」（与 GitHub 双向同步，SHA256 内容级比对，冲突时用户确认制）。
 
 ### 6.2 改托盘 / 启动器 → 重新生成 → 重启托盘（最常用）
 
@@ -173,23 +175,29 @@ Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.
 改 `SKILL.md` / `_meta.json` / `_icon.png` → 重装技能即可（解压 zip 覆盖 `~/.agents/skills\dsh-launcher`），无需重跑 setup。
 改 `_meta.json` 版本时同时更新 `publishedAt`：`[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()`。
 
-### 6.4 打包同步 Z: 盘（内容级比对 + 备份 + 校验，缺一不可）
+### 6.4 同步 GitHub 仓库（源树 + releases 归档 + git 推送）
+
+> 同步存档已从 Z: 盘切换为 GitHub，托盘右键「一键同步启动脚本」可自动完成（见 6.1）；
+> 以下为 AI/手动侧的对齐命令（git 历史 = 旧版本天然备份，无需手工备份旧包）。
 
 ```powershell
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$z = 'Z:\Date_Home\【MoonwelL】\【AI】\My skills\dsh-launcher__skillhub.zip'
-$tmp = Join-Path $env:TEMP ("dsh-pkg-" + [guid]::NewGuid().ToString('N') + '.zip')
-& 'C:\Windows\System32\tar.exe' -a -cf $tmp -C 'C:\Users\雍远\.agents\skills' 'dsh-launcher'
-if ($LASTEXITCODE -ne 0) { throw "打包失败 exit $LASTEXITCODE" }
-# 覆盖前：解包远端 zip 逐文件 SHA256 与本机比对，不一致先停下人工定方向，绝不盲覆盖
-Copy-Item $z "Z:\Date_Home\【MoonwelL】\【AI】\My skills\old\dsh-launcher__skillhub.v1.1.64-OK.bak.zip" -Force
-Copy-Item $tmp $z -Force
-(Get-FileHash $tmp -Algorithm SHA256).Hash -eq (Get-FileHash $z -Algorithm SHA256).Hash  # 必须 True
-[System.IO.Compression.ZipFile]::OpenRead($z).Dispose()   # 能打开=完整
-Remove-Item $tmp -Force
+$repo  = 'https://github.com/moonwellxh/DSH-Launcher.git'
+$cache = "$env:USERPROFILE\.dsh\gh-sync\DSH-Launcher"
+if (-not (Test-Path "$cache\.git")) { git clone -b main --depth 1 $repo $cache }   # 首次
+git -C $cache fetch origin main; git -C $cache reset --hard origin/main            # 对齐最新
+# ① 更新源树：本机技能目录复制进 $cache\dsh-launcher（或反向应用回本机）
+# ② 重打包 zip 到 releases\<版本>\：
+#   & 'C:\Windows\System32\tar.exe' -a -cf "$cache\releases\v<版本>\dsh-launcher__skillhub.zip" -C $cache 'dsh-launcher'
+# ③ 提交推送：
+git -C $cache add -A
+git -C $cache commit -m "dsh-launcher v<版本> 同步"
+git -C $cache push origin main
+# ④ 写盘后校验 zip：按 zip-archive-ops 技能
 ```
 
-> **Z: 是 NAS（RaiDrive/Synology）**：会掉线/读旧缓存。读 zip 先复制到本地临时目录；**禁止短时间连环打开多个 zip**（曾压垮 RaiDrive）。写盘后按 `zip-archive-ops` 技能校验。
+> **GitHub 网络与凭据**：国内环境需 git 已配置代理（`http.proxy`）；托盘同步在隐藏窗口
+> 非交互运行（`GIT_TERMINAL_PROMPT=0`），push 缺凭据会立即报错——提前用 credential
+> manager / SSH key 配好凭据。
 
 ### 6.5 打补丁 / 还原补丁
 
@@ -250,14 +258,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File $pe -Restore     # 还原官
 
 ## 8. 配套技能交接（主包内嵌，setup.ps1 自动安装）
 
-| 技能 | Z 盘位置 | 版本 |
+| 技能 | GitHub 位置 | 版本 |
 |---|---|---|
-| `zip-archive-ops` | `dsh-launcher Add\` + 内嵌 | 1.0.4 |
-| `charset-pitfalls` | `dsh-launcher Add\` + 内嵌 | 1.1.3 |
-| `batch-files` | `dsh-launcher Add\` + 内嵌 | 1.1.3 |
-| `skill-install-ops` | `dsh-launcher Add\` + 内嵌 | 1.1.2 |
+| `zip-archive-ops` | 仓库 `releases\<当前版本>\` + 源树 `dsh-launcher Add\` + 主包内嵌 | 1.0.4 |
+| `charset-pitfalls` | 仓库 `releases\<当前版本>\` + 源树 `dsh-launcher Add\` + 主包内嵌 | 1.1.3 |
+| `batch-files` | 仓库 `releases\<当前版本>\` + 源树 `dsh-launcher Add\` + 主包内嵌 | 1.1.3 |
+| `skill-install-ops` | 仓库 `releases\<当前版本>\` + 源树 `dsh-launcher Add\` + 主包内嵌 | 1.1.2 |
 
-- 分发只需一个包 `dsh-launcher__skillhub.zip`；配套技能变更后**三连同步**：① 打包 `xxx__skillhub.zip` → `dsh-launcher Add\`；② 复制进 `assets\配套技能\` 覆盖旧包；③ 重打包主包 → `My skills\` 根目录。并递增该技能 `_meta.json` version/publishedAt。
+- 分发只需一个包 `dsh-launcher__skillhub.zip`；配套技能变更后**三连同步**：① 打包 `xxx__skillhub.zip` 归档到 GitHub `releases\<当前版本>\`＋更新仓库源树 `dsh-launcher Add\<技能名>\`；② 复制进 `assets\配套技能\` 覆盖旧包；③ 重打包主包到 `releases\<当前版本>\` 并 git commit + push。并递增该技能 `_meta.json` version/publishedAt。
 - **归档定位铁律（用户明确）**：技能是否进 launcher 配套，**最终由用户拍板**；AI 只能预判（通用运维→配套，个性化生产力→根目录独立），判断后必须先征得用户同意。当前 4 个是历史决定；`cad-scan-eye` 为根目录独立能力。
 
 ---
@@ -312,23 +320,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\DSHS\_tools\dsh-sync-conf
 - `_meta.json` version/publishedAt 已升（改了内容就升）
 - `D:\DSHS\assets\` 与技能本体关键文件一致
 - 托盘已用新脚本重启、web 正常
-- **Z: 同步等用户测试满意后再做**（改完不自动传；用户点托盘「一键同步启动脚本」或按 6.4 手动打包）
+- **GitHub 推送等用户测试满意后再做**（改完不自动推；用户点托盘「一键同步启动脚本」或按 6.4 手动提交推送）
 
 ### 11.3 首日验证清单
 
-- [ ] `SKILL.md` / `_meta.json` / `launcher.version` / Z: zip 内版本一致（1.1.64）
+- [ ] `SKILL.md` / `_meta.json` / `launcher.version` / GitHub `releases\v1.1.65\` zip 内版本一致（1.1.65）
 - [ ] 生成物正常：`dsh.cmd`、`DSH-tray.ps1`（UTF-8 BOM）、`启动DSH-托盘.vbs` 存在
 - [ ] 补丁已应用：`~\.dsh\patches-backup\dsh-recycle-bin-v1\` 含 backup-manifest.json + 5 个 orig 文件
 - [ ] `补丁引擎-应用还原检查.ps1 -CheckOnly` 可跑
 - [ ] 托盘右键三行正常（版本 / 最新版本 / 一键同步启动脚本）
 - [ ] web(3080) 可访问、会话历史可加载、消息有反馈
-- [ ] Z 盘主包 + `dsh-launcher Add\` 4 包 + `old\` 备份可读
-- [ ] 已更新 `_记忆\通用记忆.md` 第 10 节过期快照（1.1.60 → 1.1.64）
+- [ ] GitHub 仓库源树 + `releases\` 归档可读；托盘「一键同步启动脚本」可连通 GitHub（clone/fetch 正常）
+- [ ] 已更新 `_记忆\通用记忆.md` 第 10 节过期快照（1.1.60 → 1.1.65）
 - [ ] 通读本文第 5 节铁律 + 7.3 补丁红线
 
 ---
 
-## 12. 版本历史摘要（1.1.48 → 1.1.64，详见 SKILL.md 兼容性列表）
+## 12. 版本历史摘要（1.1.48 → 1.1.65，详见 SKILL.md 兼容性列表）
 
 | 版本 | 变更要点 |
 |---|---|
@@ -341,7 +349,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\DSHS\_tools\dsh-sync-conf
 | 1.1.60 | 修复托盘右键「最新版本」查询失败：强制 TLS1.2 + 优先直连（Clash 7897 环境实测需要）、失败回退系统代理 |
 | 1.1.61 | 一键托盘入口全面去闪烁：`.cmd` 自隐藏包装（run-hidden.vbs）+ 新增零窗口 `.vbs` 入口 |
 | 1.1.62 | 托盘右键第三行文案：「一键启动脚本版本」→「一键同步启动脚本」 |
-| 1.1.64 | 同步冲突处理（用户确认制）：时间戳相同内容不同 → 分析展示 → 用户确认方向；上传前备份服务器旧包，绝不自动覆盖良包 |
+| 1.1.64 | 同步冲突处理（用户确认制）：时间戳相同内容不同 → 分析展示 → 用户确认方向；绝不自动覆盖良包 |
+| 1.1.65 | **同步存档全面切换 GitHub**：弃用 Z: 盘（NAS）存档；托盘「一键同步」改为 git 双向同步 `moonwellxh/DSH-Launcher`（源树 SHA256 比对 + 上传重打包 zip 到 `releases\<版本>\` + git add/commit/push；git 历史天然备份旧版，不再手工备份旧包） |
 
 **补丁历史**：档案柜 v1 最初基于 0.1.0-rc.7，2026-08-23 重新适配 0.1.1-rc.2（对每个目标文件 diff 旧原始 vs 旧补丁提取增量，再按新版上下文套用）。当前 `compatibleDsh="0.1.1-rc.2"`。
 
@@ -349,9 +358,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\DSHS\_tools\dsh-sync-conf
 
 ## 13. 风险与未决事项
 
-1. **`_记忆\通用记忆.md` 状态快照过期**（写 1.1.60，实际 1.1.64）——需更新，本文第 3 节可作依据。
+1. **`_记忆\通用记忆.md` 状态快照过期**（写 1.1.60，实际 1.1.65）——需更新，本文第 3 节可作依据。
 2. **补丁与 DSH 版本强绑定**：档案柜 v1 仅适配 0.1.1-rc.2。下次 DSH 升级必须先挂起补丁（6.6 流程），否则可能重演 08-23 前端渲染故障。
-3. **Z 盘（NAS 映射）稳定性**：掉线/缓存滞后是常态，遵循 6.4 铁律；重打主包前先备份良包到 `old\`。
+3. **GitHub 网络与凭据**：国内环境需 git 已配置代理；托盘同步非交互运行（`GIT_TERMINAL_PROMPT=0`），push 缺凭据会立即报错——须提前用 credential manager / SSH key 配好凭据；多机并发 push 罕见，冲突时以 git 提示为准人工合并。
 4. **PWA 主应用依赖 Edge 手动安装**：Edge 无静默安装命令行，新机器需引导用户手动「安装为应用」一次。
 5. **本文为快照文档**：后续版本变更、补丁增删、路径变化，应在 `SKILL.md` 兼容性列表与 `_记忆\通用记忆.md` 同步更新。
 

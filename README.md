@@ -1,6 +1,6 @@
 # dsh-launcher — DSH 一键启动 + 系统托盘
 
-> **当前版本：1.1.64** · 适配 DSH：`0.1.0-rc.7` / `0.1.1-rc.2` · 平台：Windows（PowerShell 5.1+）
+> **当前版本：1.1.65** · 适配 DSH：`0.1.0-rc.7` / `0.1.1-rc.2` · 平台：Windows（PowerShell 5.1+）
 
 `dsh-launcher` 是 DeepSeek Harness（DSH）的**一键启动器生成器**：给任意一台已装 DSH 的
 Windows 机器安装「一键启动 + 系统托盘手动关闭」方案。它生成 `启动DSH.bat` 菜单启动器、
@@ -22,7 +22,8 @@ Windows 机器安装「一键启动 + 系统托盘手动关闭」方案。它生
 - **零窗口入口**：`启动DSH-托盘.vbs`（wscript 直启，零命令行窗口）与自隐藏 `.cmd` 入口，双击不闪屏。
 - **补丁自动载入**：`assets\补丁管理\` 内置补丁引擎，随安装自动按清单打补丁（幂等、可挂起、可一键还原）。
 - **配套技能一体分发**：只需分发一个 `dsh-launcher__skillhub.zip`，安装时自动携带 4 个配套技能。
-- **一键同步**：托盘右键「一键同步启动脚本」，与远端做逐文件 SHA256 内容级双向同步，冲突时用户确认制。
+- **一键同步（GitHub）**：托盘右键「一键同步启动脚本」与 GitHub 仓库 `moonwellxh/DSH-Launcher`
+  做 git 双向同步（源树逐文件 SHA256 比对，冲突时用户确认制；上传自动更新源树 + 重打包 zip 归档）。
 
 ---
 
@@ -32,8 +33,7 @@ Windows 机器安装「一键启动 + 系统托盘手动关闭」方案。它生
 DSH-Launcher/
 ├── README.md                        ← 本文件（仓库说明）
 ├── dsh-launcher-交接与维护手册-TRAESolo.md  ← 资产交接清单 + 可执行维护操作手册（先读它）
-├── dsh-launcher__skillhub.zip       ← 主技能分发包（zip 根目录 = 技能名 dsh-launcher）
-├── dsh-launcher/                    ← 主技能源树（解压自主包，便于浏览）
+├── dsh-launcher/                    ← 主技能源树（**维护对象**）
 │   ├── SKILL.md                     ← 技能主文档（安装/用法/排障/兼容性）
 │   ├── _meta.json                   ← 版本元数据（version / publishedAt / compatibleDsh）
 │   ├── 就地安装.bat                 ← 绿色安装：注册技能 + 就地生成启动器
@@ -44,12 +44,12 @@ DSH-Launcher/
 │       ├── 配套技能/                ← 内嵌 4 个配套技能 zip（setup.ps1 自动安装）
 │       ├── 补丁管理/                ← 补丁引擎 + 自动载入清单 + 补丁01-档案柜v1
 │       └── 图标（tray.ico / whale*.ico / whale-white.png）
-└── dsh-launcher Add/                ← 4 个配套技能的独立分发包 + 源树
-    ├── batch-files__skillhub.zip    （1.1.3）
-    ├── charset-pitfalls__skillhub.zip（1.1.3）
-    ├── skill-install-ops__skillhub.zip（1.1.2）
-    ├── zip-archive-ops__skillhub.zip（1.0.4）
-    └── <技能名>/                    ← 配套技能源树（解压自对应 zip，便于浏览）
+├── dsh-launcher Add/                ← 4 个配套技能的**源树**（zip 已集中到 releases/）
+│   ├── batch-files/ （1.1.3）  charset-pitfalls/ （1.1.3）
+│   └── skill-install-ops/ （1.1.2）  zip-archive-ops/ （1.0.4）
+└── releases/                        ← **zip 集中归档目录（历史版本按目录留档）**
+    ├── v1.1.64/                     ← 历史版本（主包 + 配套包）
+    └── v1.1.65/                     ← 当前版本（dsh-launcher__skillhub.zip 等）
 ```
 
 ---
@@ -59,7 +59,7 @@ DSH-Launcher/
 ### 方式 A：作为 DSH 技能使用（有 AI 协助时，推荐）
 
 1. 解压 `dsh-launcher__skillhub.zip` 到 DSH 技能目录 `~/.agents/skills/dsh-launcher`
-   （zip 根目录 = 技能名）。
+   （zip 根目录 = 技能名；可从仓库 `releases\v1.1.65\dsh-launcher__skillhub.zip` 下载）。
 2. 运行安装脚本（AI 或手动均可）：
 
    ```powershell
@@ -129,8 +129,9 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 | `skill-install-ops` | 1.1.2 | 技能安装运维规范（自带版本号与自动进化机制） |
 
 > 分发只需 `dsh-launcher__skillhub.zip` 一个包。任一配套技能变更后需**三连同步**：
-> ① 打包 `xxx__skillhub.zip` → `dsh-launcher Add\`；② 复制进 `assets\配套技能\` 覆盖旧包；
-> ③ 重打包主包，并递增该技能 `_meta.json` 的 version / publishedAt。
+> ① 打包 `xxx__skillhub.zip` 归档到 GitHub `releases\<当前版本>\`＋更新源树 `dsh-launcher Add\<技能名>\`；
+> ② 复制进 `assets\配套技能\` 覆盖旧包；③ 重打包主包并 git commit + push，且递增该技能
+> `_meta.json` 的 version / publishedAt。
 
 ---
 
@@ -138,10 +139,10 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 
 | 组件 | 版本 | 兼容 DSH |
 |---|---|---|
-| dsh-launcher | 1.1.64 | 0.1.0-rc.7、0.1.1-rc.2 |
+| dsh-launcher | 1.1.65 | 0.1.0-rc.7、0.1.1-rc.2 |
 | 档案柜 v1 补丁 | 0.1.1 | **仅 0.1.1-rc.2**（载荷绑定版本） |
 
-版本历史（1.1.48 → 1.1.64）要点：
+版本历史（1.1.48 → 1.1.65）要点：
 
 - **1.1.51** P0-P2 全面修复（补丁引擎陷阱 / 托盘重启链编码等）
 - **1.1.53-57** 双击 / 「打开 Web UI」优先打开已装 PWA 主应用（SC_RESTORE 聚焦 + 引导式安装）
@@ -150,7 +151,8 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 - **1.1.60** 修复「最新版本」查询：强制 TLS1.2 + 优先直连、失败回退代理
 - **1.1.61** 一键托盘入口全面去闪烁（自隐藏 .cmd + 零窗口 .vbs）
 - **1.1.62** 托盘右键第三行文案 →「一键同步启动脚本」
-- **1.1.64** 同步冲突处理（用户确认制）：时间戳相同但内容不同时，弹窗展示分析，用户确认方向（上传/拉取/取消）后才执行；上传前先备份服务器旧包，绝不自动覆盖良包
+- **1.1.64** 同步冲突处理（用户确认制）：时间戳相同但内容不同时，弹窗展示分析，用户确认方向（上传/拉取/取消）后才执行，绝不自动覆盖良包
+- **1.1.65** **同步存档全面切换 GitHub**：弃用 Z: 盘（NAS）存档；托盘「一键同步」改为 git 双向同步 `moonwellxh/DSH-Launcher`（上传=更新源树 + 重打包 zip 到 `releases\<版本>\` + git add/commit/push；git 历史天然备份旧版）
 
 ---
 
@@ -174,4 +176,5 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 
 ---
 
-*本仓库为技能与维护文档的公开归档。具体路径、同步目标（Z 盘等）为个人环境信息，见交接手册第 1 节。*
+*本仓库为技能与维护文档的公开归档。同步目标为 GitHub 仓库 `moonwellxh/DSH-Launcher`；
+本机路径等个人环境信息见交接手册第 1 节。*

@@ -1,8 +1,8 @@
 {
     "ownerId":  "local-maintenance",
     "slug":  "dsh-launcher",
-    "version":  "1.1.64",
-    "publishedAt":  1787837721722,
+    "version":  "1.1.65",
+    "publishedAt":  1787854252769,
     "compatibleDsh":  [
                           "0.1.0-rc.7",
                           "0.1.1-rc.2"
