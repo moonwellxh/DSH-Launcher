@@ -9,3 +9,6 @@ Desktop.ini
 
 # 本地记忆/工具等个人文件（如需入库请自行调整）
 *~
+
+# 机器特定安装路径（各机器不同，不入库）
+dsh-launcher/assets/install-dir.txt

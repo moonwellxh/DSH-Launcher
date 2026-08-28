@@ -89,7 +89,7 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 | `启动DSH.bat` | 菜单启动器（1 托盘+Web / 2 TUI / 3 Headless / 0 退出） |
 | `启动DSH-托盘.cmd` | 一键托盘（跳过菜单，直接启动 + 开浏览器；**已自隐藏窗口**：首次进入经 `run-hidden.vbs` 隐藏重入，双击不再闪命令行窗口） |
 | `启动DSH-托盘.vbs` | 一键托盘（**零命令行窗口**，wscript 直启 DSH-tray.ps1，推荐双击入口；配套 `run-hidden.vbs` 供 .cmd 自隐藏重入） |
-| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「一键同步启动脚本 x.x.x」（点击**与 GitHub 双向同步**：以仓库源树 `dsh-launcher/` 为比对对象逐文件 SHA256 内容比对，方向按双方实际 `_meta.json` 时间戳判定——GitHub 新则更新本地并重跑 setup 后自动重启托盘，本地新则更新源树 + 重打包 zip 到 `releases\<版本>\` + git 提交推送并校验，一致则跳过，时间戳相同但内容不同则按文件修改时间分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
+| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「一键同步启动脚本 x.x.x」（点击**与 GitHub 双向同步**（发布级）：配置优先环境变量 `DSH_SYNC_REPO` / `DSH_SYNC_BRANCH` / `DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 内置默认（repo=`moonwellxh/DSH-Launcher`、branch=`feature/github-sync-v1.1.65`）；网络自动探测系统代理、直连↔代理双路回退（命令级 `-c` 注入，不改全局 git 配置）；git 全程非交互（禁终端提示 + 禁 GCM 弹窗），失败按类给出可操作提示（未装 git / 认证缺失或失效 / 仓库分支 404 / 网络不通 / 非快进）；以仓库源树 `dsh-launcher/` 为比对对象逐文件内容比对（文本先归一化 CRLF→LF 再哈希，避免 autocrlf 造成"同内容不同哈希"；跳过机器特定文件 install-dir.txt），方向按双方实际 `_meta.json` 时间戳判定——GitHub 新则更新本地并重跑 setup 后自动重启托盘，本地新则更新源树 + 发布 **5 个 zip（主包+4 配套）** 到 `releases\<版本>\` + git 提交推送（`HEAD:<branch>`，token 经 http.extraheader 仅内存注入、不落盘不打印）并校验，一致则跳过，时间戳相同但内容不同则按 **git 提交时间 vs 本地修改时间**分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版；同步带互斥锁防并发；缓存损坏自动重建）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
 | `dsh.cmd` | CLI 入口包装（`--version` / TUI / Headless） |
 | `whale-white.ico` / `whale-white.png` | 托盘图标（默认，白色描边鲸鱼版，镂空填白/下半白底） |
 | `tray.ico` / `whale.ico` | 备用图标（自动回退） |
@@ -125,11 +125,18 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
   含本技能全部编码约定与踩坑记录），动手前对照编码表，不要等出乱码再查。
 - **冷启动**：源码树模式优先用已构建的 `apps\cli\lib\bin.js`（免 tsx，约 4s），
 - **0xc0000142（cmd/node 偶发"应用程序无法正常启动"）**：DLL 初始化失败的瞬时现象，多为**快速连续拉起多个进程**（或系统瞬时状态/其他安全软件扫描）触发，非持续故障。处理：避免密集拉进程；托盘版本读取已改为直接读 package.json（免 node 进程）；如频繁出现再排查系统 DLL/安全软件。- **快捷方式图标不更新**：`.lnk` 指向的 `.ico` 文件本身没问题时，是 Windows 图标缓存未刷新。解决顺序：先 `ie4uinit.exe -show`；仍不更新则结束 Explorer（`taskkill /f /im explorer.exe`）→ 删除 `%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache_*.db` → 重启 Explorer（`start explorer.exe`）。
-- **GitHub 同步（同步守卫）**：托盘「一键同步」以仓库源树 `dsh-launcher/` 为比对对象，逐文件
-  **SHA256 内容级比对（不信任缓存/版本号）**，方向按双方实际 `_meta.json` 时间戳判定；时间戳相同
-  但内容不同时按文件修改时间分析并弹窗由用户确认方向（上传/拉取/取消），**绝不自动覆盖远端良包**。
-  上传 = git 提交推送（git 历史保留旧版，无需手工备份旧包）；写 zip 后按 `zip-archive-ops` 校验。
-  打包/修复流程见 `zip-archive-ops` 技能。
+- **GitHub 同步（同步守卫，1.1.66 发布级重写）**：托盘「一键同步」以仓库源树 `dsh-launcher/` 为比对对象，逐文件
+  **内容级比对（不信任缓存/版本号）**——文本文件先归一化 CRLF→LF 再 SHA256（git `core.autocrlf` 会把检出文件
+  变成 CRLF，与 zip 内 LF"同内容不同哈希"，必须归一化；二进制如 zip/ico/png 保持原始字节）；**跳过机器特定文件**
+  （`assets/install-dir.txt`）；方向按双方实际 `_meta.json` 时间戳判定；时间戳相同但内容不同时按 **git 提交时间 vs
+  本地修改时间**分析并弹窗由用户确认方向（上传/拉取/取消），**绝不自动覆盖远端良包**。配置/健壮性：repo/branch/token
+  可配置（环境变量 `DSH_SYNC_REPO/DSH_SYNC_BRANCH/DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 默认）；
+  网络自动探测系统代理（注册表）直连↔代理双路回退；git 非交互（`GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=Never`
+  防弹窗挂起）；失败分类为可操作提示（未装 git / 认证缺失或失效 / 仓库或分支 404 / 网络不通 / 非快进）；
+  上传 = 更新源树 + 发布 5 个 zip（主包+4 配套，.NET ZipFile 正斜杠条目名、排除 install-dir.txt）到
+  `releases\<版本>\` + git 提交推送（`HEAD:<branch>`，token 经 http.extraheader 仅内存注入）；同步带互斥锁防并发、
+  缓存损坏自动重建、结构契约校验（缺 `dsh-launcher/` 源树即报错并提示检查 branch）。写 zip 后按 `zip-archive-ops`
+  校验。打包/修复流程见 `zip-archive-ops` 技能。
   避免 `--import tsx/esm apps/cli/src/bin.ts` 的约 20s 现场编译。
 
 ## 关键原理（排障补记 2026-08-21）
@@ -274,6 +281,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.66 | 0.1.0-rc.7、0.1.1-rc.2 | 1.1.66 「一键同步」发布级重写：repo/branch/token 可配置（env > `~\.dsh\gh-sync\config.json` > 默认，同步分支改 `feature/github-sync-v1.1.65`）；系统代理自动探测 + 直连↔代理双路回退（命令级 -c 注入不改全局 git）；git 非交互防弹窗（GIT_TERMINAL_PROMPT=0 + GCM_INTERACTIVE=Never），失败分类为可操作提示（未装 git/认证缺失失效/仓库分支 404/网络不通/非快进）；文本比对归一化 CRLF→LF（修 autocrlf 同内容不同哈希 bug）、跳过机器特定文件、时间戳相同按 git 提交时间分析（修 clone 后 mtime 误判）；上传发布 5 个 zip（主包+4 配套）到 `releases\<版本>\`、`HEAD:<branch>` push、token 经 http.extraheader 仅内存注入；互斥锁防并发、缓存损坏自愈、结构契约校验； |
 | dsh-launcher（一键启动本体） | 1.1.65 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘所用 RPC 在两版均存在；`_meta.json` 的 `compatibleDsh` 字段同步维护；1.1.48 起配套技能版本比较改为「版本号优先、时间戳兜底」；1.1.51 完成 P0-P2 全面修复（补丁引擎 $LASTEXITCODE 陷阱/还原 enabled、托盘重启链编码、更新安装.cmd 降级等）；1.1.52 修复还原失败时 manifest 丢失成功项的回归 + 文档验证口径同步；1.1.53-57 托盘双击/「打开 Web UI」优先打开已装 PWA 主应用（SC_RESTORE 聚焦 + IsZoomed 最大化保护 + 未装引导式安装）；1.1.58 固化调试纪律铁律（绝不在运行中生成物上直接编辑，改模板→重新生成→验证→重启，先备份良包）；1.1.59 「重启 DSH」改版：杀 web + 按标题关闭 DSH 浏览器窗口（CloseDshWindows，WM_CLOSE 优雅关闭，不碰其他窗口）+ helper 接力重启托盘（-OpenBrowser 就绪后自动重开 PWA），所有 Start-Process powershell 统一加结尾 -WindowStyle Hidden 消除命令行窗口闪现；1.1.60 修复托盘右键「最新版本」查询失败：PS5.1 默认 TLS 非 1.2 + 系统代理（Clash 7897）对 npm HTTPS 转发不可靠 → Get-LatestDshInfo 强制 TLS1.2 + 优先直连（WebClient.Proxy=$null）、失败回退系统代理；1.1.61 一键托盘入口全面去闪烁：`启动DSH-托盘.cmd` 顶部加自隐藏包装（`run-hidden.vbs` 经 wscript 以隐藏窗口重入，`__DSH_HIDDEN` 标记防重入），新增零窗口双击入口 `启动DSH-托盘.vbs`（wscript 直启隐藏 powershell），setup.ps1 部署新 vbs 并更新产物清单；1.1.62 托盘右键第三行文案优化：「一键启动脚本版本」→「一键同步启动脚本」（模板/文档/生成物同步；内容变更同步 bump _meta 版本时间戳，避免同步误判人工复核）；1.1.64 同步冲突处理（用户确认制）：时间戳相同但内容不同时，按实际文件修改时间分析并弹窗展示分析/建议，由用户确认方向（上传/拉取/取消）后才执行，绝不自动覆盖良包；1.1.65 同步存档全面切换 GitHub：弃用 Z: 网络盘（NAS）存档，托盘「一键同步」改为 git 双向同步 `moonwellxh/DSH-Launcher`（clone/fetch 工作副本 `~\.dsh\gh-sync\DSH-Launcher`，逐文件 SHA256 比对逻辑不变；上传=更新源树 + 重打包 zip 到 `releases\<版本>\` + git add/commit/push，git 历史天然备份旧版，不再手工备份旧包；拉取=与仓库源树比对后应用并重跑 setup；git 全程非交互 GIT_TERMINAL_PROMPT=0，缺凭据立即报错） |
 | 档案柜 v1 补丁 | 0.1.1 | **仅 0.1.1-rc.2** | 载荷绑定版本；清单 `compatibleDsh` 字段校验 |
 
