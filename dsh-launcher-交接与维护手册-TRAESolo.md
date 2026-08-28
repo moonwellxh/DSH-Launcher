@@ -131,7 +131,7 @@
 - 关闭：托盘右键 →「退出并停止 DSH」（`taskkill /PID <3080监听PID> /T /F` 停整棵进程树）。
 - 菜单：`启动DSH.bat`（1 托盘+Web / 2 TUI / 3 Headless / 0 退出）。
 - 托盘右键顶部三行：DSH 版本（点开 deepseekdocs.com）/ 最新版本（可更新时点升级）/
-  「一键同步启动脚本」（与 GitHub 双向同步，SHA256 内容级比对，冲突时用户确认制）。
+  「启动托盘 x.x.x 版（点击可更新/已是最新）」（点击与 GitHub 双向同步，SHA256 内容级比对，冲突时用户确认制）。
 
 ### 6.2 改托盘 / 启动器 → 重新生成 → 重启托盘（最常用）
 
@@ -177,7 +177,7 @@ Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.
 
 ### 6.4 同步 GitHub 仓库（源树 + releases 归档 + git 推送）
 
-> 同步存档已从 Z: 盘切换为 GitHub，托盘右键「一键同步启动脚本」可自动完成（见 6.1）；
+> 同步存档已从 Z: 盘切换为 GitHub，托盘右键第三行可自动完成（见 6.1）；
 > 以下为 AI/手动侧的对齐命令（git 历史 = 旧版本天然备份，无需手工备份旧包）。
 
 ```powershell
@@ -320,7 +320,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\DSHS\_tools\dsh-sync-conf
 - `_meta.json` version/publishedAt 已升（改了内容就升）
 - `D:\DSHS\assets\` 与技能本体关键文件一致
 - 托盘已用新脚本重启、web 正常
-- **GitHub 推送等用户测试满意后再做**（改完不自动推；用户点托盘「一键同步启动脚本」或按 6.4 手动提交推送）
+- **GitHub 推送等用户测试满意后再做**（改完不自动推；用户点托盘第三行「启动托盘版本」或按 6.4 手动提交推送）
 
 ### 11.3 首日验证清单
 
@@ -328,9 +328,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\DSHS\_tools\dsh-sync-conf
 - [ ] 生成物正常：`dsh.cmd`、`DSH-tray.ps1`（UTF-8 BOM）、`启动DSH-托盘.vbs` 存在
 - [ ] 补丁已应用：`~\.dsh\patches-backup\dsh-recycle-bin-v1\` 含 backup-manifest.json + 5 个 orig 文件
 - [ ] `补丁引擎-应用还原检查.ps1 -CheckOnly` 可跑
-- [ ] 托盘右键三行正常（版本 / 最新版本 / 一键同步启动脚本）
+- [ ] 托盘右键三行正常（版本 / 最新版本 / 启动托盘版本）
 - [ ] web(3080) 可访问、会话历史可加载、消息有反馈
-- [ ] GitHub 仓库源树 + `releases\` 归档可读；托盘「一键同步启动脚本」可连通 GitHub（clone/fetch 正常）
+- [ ] GitHub 仓库源树 + `releases\` 归档可读；托盘「启动托盘版本」行可连通 GitHub（clone/fetch 正常）
 - [ ] 已更新 `_记忆\通用记忆.md` 第 10 节过期快照（1.1.60 → 1.1.65）
 - [ ] 通读本文第 5 节铁律 + 7.3 补丁红线
 

@@ -89,7 +89,7 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 | `启动DSH.bat` | 菜单启动器（1 托盘+Web / 2 TUI / 3 Headless / 0 退出） |
 | `启动DSH-托盘.cmd` | 一键托盘（跳过菜单，直接启动 + 开浏览器；**已自隐藏窗口**：首次进入经 `run-hidden.vbs` 隐藏重入，双击不再闪命令行窗口） |
 | `启动DSH-托盘.vbs` | 一键托盘（**零命令行窗口**，wscript 直启 DSH-tray.ps1，推荐双击入口；配套 `run-hidden.vbs` 供 .cmd 自隐藏重入） |
-| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「一键同步启动脚本 x.x.x」（点击**与 GitHub 双向同步**（发布级）：配置优先环境变量 `DSH_SYNC_REPO` / `DSH_SYNC_BRANCH` / `DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 内置默认（repo=`moonwellxh/DSH-Launcher`、branch=`feature/github-sync-v1.1.65`）；网络自动探测系统代理、直连↔代理双路回退（命令级 `-c` 注入，不改全局 git 配置）；git 全程非交互（禁终端提示 + 禁 GCM 弹窗），失败按类给出可操作提示（未装 git / 认证缺失或失效 / 仓库分支 404 / 网络不通 / 非快进）；以仓库源树 `dsh-launcher/` 为比对对象逐文件内容比对（文本先归一化 CRLF→LF 再哈希，避免 autocrlf 造成"同内容不同哈希"；跳过机器特定文件 install-dir.txt），方向按双方实际 `_meta.json` 时间戳判定——GitHub 新则更新本地并重跑 setup 后自动重启托盘，本地新则更新源树 + 发布 **5 个 zip（主包+4 配套）** 到 `releases\<版本>\` + git 提交推送（`HEAD:<branch>`，token 经 http.extraheader 仅内存注入、不落盘不打印）并校验，一致则跳过，时间戳相同但内容不同则按 **git 提交时间 vs 本地修改时间**分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版；同步带互斥锁防并发；缓存损坏自动重建）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
+| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「启动托盘 x.x.x 版（点击可更新/已是最新）」（点击**与 GitHub 双向同步**（发布级）：配置优先环境变量 `DSH_SYNC_REPO` / `DSH_SYNC_BRANCH` / `DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 内置默认（repo=`moonwellxh/DSH-Launcher`、branch=`feature/github-sync-v1.1.65`）；网络自动探测系统代理、直连↔代理双路回退（命令级 `-c` 注入，不改全局 git 配置）；git 全程非交互（禁终端提示 + 禁 GCM 弹窗），失败按类给出可操作提示（未装 git / 认证缺失或失效 / 仓库分支 404 / 网络不通 / 非快进）；以仓库源树 `dsh-launcher/` 为比对对象逐文件内容比对（文本先归一化 CRLF→LF 再哈希，避免 autocrlf 造成"同内容不同哈希"；跳过机器特定文件 install-dir.txt），方向按双方实际 `_meta.json` 时间戳判定——GitHub 新则更新本地并重跑 setup 后自动重启托盘，本地新则更新源树 + 发布 **5 个 zip（主包+4 配套）** 到 `releases\<版本>\` + git 提交推送（`HEAD:<branch>`，token 经 http.extraheader 仅内存注入、不落盘不打印）并校验，一致则跳过，时间戳相同但内容不同则按 **git 提交时间 vs 本地修改时间**分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版；同步带互斥锁防并发；缓存损坏自动重建）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
 | `dsh.cmd` | CLI 入口包装（`--version` / TUI / Headless） |
 | `whale-white.ico` / `whale-white.png` | 托盘图标（默认，白色描边鲸鱼版，镂空填白/下半白底） |
 | `tray.ico` / `whale.ico` | 备用图标（自动回退） |
@@ -275,7 +275,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 光更新技能不会刷新这些生成物；`setup.ps1` 幂等，可安全重复执行。
 
 合并多台机器的修改时：以 GitHub 仓库为准逐文件比对，凡「GitHub 有而本地无」或「两边不同」的文件，
-以 GitHub 为准并入本地，再 git commit + push 回 GitHub（托盘右键「一键同步启动脚本」可自动完成双向同步）。
+以 GitHub 为准并入本地，再 git commit + push 回 GitHub（托盘右键第三行「启动托盘版本」可自动完成双向同步）。
 
 ## 兼容性列表（适配关系，修改技能/补丁时必须同步维护）
 
@@ -299,7 +299,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 安装/修改/更新本技能后，维护仓库内**解压源树 `dsh-launcher/`**（本技能目录），并把新 zip
 （根目录 = 技能名 `dsh-launcher`）归档到 GitHub 仓库 `releases\<版本>\dsh-launcher__skillhub.zip`
-（如 `releases/v1.1.65/`），随后 git commit + push。托盘右键「一键同步启动脚本」可自动完成
+（如 `releases/v1.1.66/`），随后 git commit + push。托盘右键第三行「启动托盘版本」可自动完成
 「源树更新 + 重打包 zip 到 releases\<版本>\ + 提交推送」；**大版本更新前，当前版本的内容已按
 版本目录留档在 `releases\v<旧版本>\`**（git 历史也是天然备份）。
 
