@@ -99,26 +99,6 @@ function Get-LatestDshInfo {
         return @{ version = [string]$r.version; published = [string]$pub }
     } catch { return $null }
 }
-function Get-GhLauncherVersion {
-    # 拉取 GitHub 仓库内启动器 _meta.json 的版本号（直连优先、失败回退系统代理，与 Get-LatestDshInfo 同策略）
-    param([int]$TimeoutSec = 8)
-    try {
-        try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12 } catch {}
-        $u = "https://raw.githubusercontent.com/$ghRepo/$ghBranch/dsh-launcher/_meta.json"
-        $r = $null
-        try {
-            $wc = New-Object System.Net.WebClient
-            $wc.Proxy = $null
-            $wc.Encoding = [System.Text.Encoding]::UTF8
-            $wc.Headers.Add('User-Agent', 'DSH-tray')
-            $r = [string]($wc.DownloadString($u) | ConvertFrom-Json).version
-        } catch {
-            $r = [string](Invoke-RestMethod -Uri $u -TimeoutSec $TimeoutSec).version
-        }
-        if ($r) { return $r }
-    } catch {}
-    return $null
-}
 function Test-NewerVersion([string]$cur, [string]$new) {
     if ([string]::IsNullOrWhiteSpace($cur) -or [string]::IsNullOrWhiteSpace($new)) { return $false }
     function Parse-V([string]$s) {
@@ -911,7 +891,7 @@ $webTimer.Start()
 
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-# 顶部分隔线上方三行：DSH 现有版本（加粗）/ 最新版本（可更新可点）/ 启动托盘版本（可更新/已是最新）
+# 顶部分隔线上方三行：DSH 现有版本（加粗）/ 最新版本（可更新可点）/ 一键同步启动脚本（点击与 GitHub 同步）
 $miCur = New-Object System.Windows.Forms.ToolStripMenuItem
 $miCur.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
 $miCur.Text = "DSH 版本 $(Get-CurrentDshVersion)"
@@ -921,7 +901,7 @@ $miLatest.Enabled = $false
 $miLatest.Text = '最新版本：查询中…'
 $menu.Items.Add($miLatest) | Out-Null
 $miLauncher = New-Object System.Windows.Forms.ToolStripMenuItem
-$miLauncher.Text = "启动托盘 $(Get-LauncherVersion) 版（检查中…）"
+$miLauncher.Text = "一键同步启动脚本 $(Get-LauncherVersion)"
 $menu.Items.Add($miLauncher) | Out-Null
 $menu.Items.Add('-') | Out-Null
 $miOpen  = $menu.Items.Add('打开 Web UI')
@@ -996,21 +976,12 @@ $verCheckTimer.Add_Tick({
             $miLatest.Enabled = $false
             $miLatest.Text = '最新版本：查询失败'
         }
-        # 启动托盘行：显示本机启动器版本 + 与 GitHub 主分支对比后的可更新状态
-        $ghVer = Get-GhLauncherVersion -TimeoutSec 8
-        $lv = Get-LauncherVersion
-        if ($ghVer -and (Test-NewerVersion $lv $ghVer)) {
-            $miLauncher.Text = "启动托盘 $lv 版（点击可更新）"
-        } elseif ($ghVer) {
-            $miLauncher.Text = "启动托盘 $lv 版（已是最新）"
-        } else {
-            $miLauncher.Text = "启动托盘 $lv 版（检查失败）"
-        }
+        $miLauncher.Text = "一键同步启动脚本 $(Get-LauncherVersion)"
     } catch {}
 })
 $verCheckTimer.Start()
 
-# 顶部三行点击：最新版本→DSH 升级（弹窗确认后提交）；托盘版本→与 GitHub 双向同步
+# 顶部三行点击：最新版本→DSH 升级（弹窗确认后提交）；脚本版本→与 GitHub 双向同步
 $miLatest.Add_Click({
     if (-not $script:newerAvail) { return }
     try {
