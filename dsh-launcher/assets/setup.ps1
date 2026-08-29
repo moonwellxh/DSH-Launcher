@@ -112,10 +112,43 @@ function Render([string]$name, [hashtable]$map) {
     return $t
 }
 
+function Render-Tray([string]$Mode, [hashtable]$VarMap) {
+    $partsDir = Join-Path (Join-Path $scriptDir 'tmpl') 'parts'
+    $modeJson = Get-Content -LiteralPath (Join-Path $partsDir "mode-$Mode.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    $modeRepl = @{}
+    foreach ($p in $modeJson.PSObject.Properties) { $modeRepl[$p.Name] = $p.Value }
+    # 模式值若以 parts/ 开头，则视为片段文件引用并读入内容
+    foreach ($k in @($modeRepl.Keys)) {
+        $v = $modeRepl[$k]
+        if ($v -and ($v -is [string]) -and $v.StartsWith('parts/')) {
+            $partPath = Join-Path $partsDir ($v -replace '^parts/', '')
+            $modeRepl[$k] = [System.IO.File]::ReadAllText($partPath, (New-Object System.Text.UTF8Encoding($false)))
+        }
+    }
+    $parts = Get-ChildItem -LiteralPath $partsDir -Filter '*.ps1' | Where-Object { $_.Name -notmatch '^70-sync-' } | Sort-Object Name
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($part in $parts) {
+        $content = [System.IO.File]::ReadAllText($part.FullName, (New-Object System.Text.UTF8Encoding($false)))
+        # 多轮模式替换，处理嵌套占位符（如 __MODE_WINACTIVATE_BODY__ 内含 __MODE_CLOSE_DSH_WINDOWS__）
+        do {
+            $prev = $content
+            foreach ($k in $modeRepl.Keys) {
+                if ($null -ne $modeRepl[$k]) { $content = $content.Replace($k, [string]$modeRepl[$k]) }
+            }
+        } while ($content -ne $prev)
+        # 再替换运行期变量占位符（如 __NODE_EXE__ / __DSH_ROOT__ / __DSH_CMD__）
+        foreach ($k in $VarMap.Keys) {
+            if ($null -ne $VarMap[$k]) { $content = $content.Replace($k, [string]$VarMap[$k]) }
+        }
+        [void]$sb.Append($content)
+    }
+    return $sb.ToString()
+}
+
 if ($mode -eq 'source') {
     $map = @{ '__DSH_ROOT__' = $dsRoot; '__NODE_EXE__' = $nodeExe }
     $dshCmd  = Render 'dsh.cmd.tmpl' $map
-    $trayPs1 = Render 'DSH-tray.ps1.tmpl' $map
+    $trayPs1 = Render-Tray 'source' $map
 } else {
     # 禁止回退裸 'dsh'：工作目录含本地 dsh.cmd 时会被劫持导致递归（2026-08-23 事故教训）
     if (-not $dshCmdPath) {
@@ -125,7 +158,7 @@ if ($mode -eq 'source') {
     }
     $map = @{ '__DSH_CMD__' = $dshCmdPath }
     $dshCmd  = Render 'dsh.cmd.path.tmpl' $map
-    $trayPs1 = Render 'DSH-tray.ps1.path.tmpl' $map
+    $trayPs1 = Render-Tray 'path' $map
 }
 
 # ---------- 写出（编码约定：.cmd GBK+CRLF；.ps1 UTF-8 BOM） ----------
@@ -146,6 +179,7 @@ Copy-Item  (Join-Path $scriptDir '启动DSH-托盘.vbs')  (Join-Path $InstallDir
 Copy-Item  (Join-Path $scriptDir 'run-hidden.vbs')    (Join-Path $InstallDir 'run-hidden.vbs')    -Force
 Copy-Item  (Join-Path $scriptDir 'tray.ico')          (Join-Path $InstallDir 'tray.ico')          -Force
 Copy-Item  (Join-Path $scriptDir 'whale.ico')          (Join-Path $InstallDir 'whale.ico')          -Force
+Copy-Item  (Join-Path $scriptDir 'dsh-sync.ps1')      (Join-Path $InstallDir 'dsh-sync.ps1')      -Force
 Copy-Item  (Join-Path $scriptDir 'whale-white.png')         (Join-Path $InstallDir 'whale-white.png')         -Force
 Copy-Item  (Join-Path $scriptDir 'whale-white.ico')         (Join-Path $InstallDir 'whale-white.ico')         -Force
 Step '已生成启动脚本'
