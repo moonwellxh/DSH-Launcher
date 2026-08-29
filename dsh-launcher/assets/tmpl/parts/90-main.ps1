@@ -112,6 +112,21 @@ $webTimer.Start()
 
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
+# 第三行需要连点 5 次：点击该行时阻止菜单自动关闭（标志位 + ItemClicked 时取消关闭），点其它项/别处照常关闭
+$script:keepLauncherOpen = $false
+# 用菜单级 ItemClicked 精确判断：点第三行 → 保持菜单打开（便于连点 5 次）；点其它项/别处 → 照常关闭
+$menu.Add_ItemClicked({
+    param($s, $e)
+    if ($null -ne $e.ClickedItem -and $e.ClickedItem -eq $miLauncher) { $script:keepLauncherOpen = $true }
+    else { $script:keepLauncherOpen = $false }
+})
+$menu.Add_Closing({
+    param($s, $e)
+    if ($script:keepLauncherOpen -and $e.CloseReason -eq [System.Windows.Forms.ToolStripDropDownCloseReason]::ItemClicked) {
+        $e.Cancel = $true
+        $script:keepLauncherOpen = $false
+    }
+})
 # 顶部分隔线上方三行：DSH 现有版本（加粗）/ 最新版本（可更新可点）/ 启动器版本（有新版/无新版/无法检测）
 $miCur = New-Object System.Windows.Forms.ToolStripMenuItem
 $miCur.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
@@ -220,10 +235,10 @@ $miLauncher.Add_Click({
         while ($script:launchClicks.Count -gt 0 -and ($now - $script:launchClicks[0]).TotalSeconds -gt 3) { $script:launchClicks.RemoveAt(0) }
         if ($script:launchClicks.Count -ge 5) {
             $script:launchClicks.Clear()
-            $cfgScript = Join-Path $PSScriptRoot 'configure-git-credentials.ps1'
+            $cfgScript = Join-Path $PSScriptRoot 'configure-git-credentials.vbs'
             if (Test-Path -LiteralPath $cfgScript) {
                 $notify.ShowBalloonTip(2000, 'DSH', '打开 GitHub token 配置…', 'Info')
-                Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',$cfgScript -WindowStyle Normal
+                Start-Process wscript.exe -ArgumentList ('"' + $cfgScript + '"')
             } else {
                 $notify.ShowBalloonTip(3000, 'DSH', "未找到 token 配置脚本：$cfgScript", 'Error')
             }
