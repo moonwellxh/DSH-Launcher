@@ -149,7 +149,7 @@ $miTui   = $menu.Items.Add('终端界面 (TUI)')
 $miHead  = $menu.Items.Add('无界面模式 (Headless)')
 $miDocs  = $menu.Items.Add('DS 开放平台')
 $menu.Items.Add('-') | Out-Null
-$miRestart = $menu.Items.Add('重启 DSH')
+$miRestart = $menu.Items.Add('硬重启托盘')
 $miExit  = $menu.Items.Add('退出并停止 DSH')
 $miCur.Add_Click({ try { Open-Url 'https://deepseekdocs.com/' } catch { $notify.ShowBalloonTip(3000, 'DSH', "打开文档失败：$($_.Exception.Message)", 'Error') } })
 $miOpen.Add_Click({ try { Open-Url $webUrl } catch { $notify.ShowBalloonTip(3000, 'DSH', "打开 Web UI 失败：$($_.Exception.Message)", 'Error') } })
