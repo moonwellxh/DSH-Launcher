@@ -122,6 +122,7 @@ $miLatest.Enabled = $false
 $miLatest.Text = '最新版本：查询中…'
 $menu.Items.Add($miLatest) | Out-Null
 $miLauncher = New-Object System.Windows.Forms.ToolStripMenuItem
+$miLauncher.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
 $miLauncher.Text = "DSH魔偶助手 $(Get-LauncherVersion)"
 $menu.Items.Add($miLauncher) | Out-Null
 $miGit = New-Object System.Windows.Forms.ToolStripMenuItem
