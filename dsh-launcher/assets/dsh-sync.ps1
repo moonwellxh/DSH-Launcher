@@ -133,8 +133,13 @@ function Format-SyncError {
     if ($tail) { $msg += "`n`n--- git 输出（末 8 行）---`n$tail" }
     return $msg
 }
-function Get-SyncIgnoreSet {
-    return @{ 'assets/install-dir.txt' = $true; 'install-dir.txt' = $true }
+function Is-SyncIgnored {
+    # 分发安全红线（2026-08-30）：机器特定文件与一切凭证类文件一律不进打包/上传/下载——
+    # 即使误把 config.json / credentials / .dsh / *.token 放进技能目录，也会被这里拦下，绝不外泄。
+    param([string]$Rel)
+    if ($Rel -in @('install-dir.txt', 'assets/install-dir.txt')) { return $true }
+    if ($Rel -match '(^|/)(config\.json|credentials[^/]*|\.dsh[^/]*|[^/]*\.token[^/]*)$') { return $true }
+    return $false
 }
 function Get-SyncFileHash {
     param([string]$Path)
@@ -191,7 +196,7 @@ function Publish-SkillZip {
     try {
         Get-ChildItem -LiteralPath $SkillDir -Recurse -File | ForEach-Object {
             $rel = $_.FullName.Substring($SkillDir.Length).TrimStart('\') -replace '\\','/'
-            if ($rel -in @('install-dir.txt', 'assets/install-dir.txt')) { return }
+            if (Is-SyncIgnored $rel) { return }
             $entry = $zip.CreateEntry(($RootName + '/' + $rel), [System.IO.Compression.CompressionLevel]::Optimal)
             $es = $entry.Open()
             try { $bytes = [System.IO.File]::ReadAllBytes($_.FullName); $es.Write($bytes, 0, $bytes.Length) } finally { $es.Close() }
@@ -317,17 +322,17 @@ function Sync-LauncherScript {
         $remoteBase = Join-Path $ghCache 'dsh-launcher'
         if (-not (Test-SyncRemoteTree $remoteBase)) { throw "GitHub 仓库结构异常：分支 `"$GhBranch`" 缺少 dsh-launcher/ 源树（SKILL.md/_meta.json）。请检查 branch 是否指向含源树的分支。" }
 
-        $ignore = Get-SyncIgnoreSet
+
         $localMap = @{}
         Get-ChildItem -LiteralPath $SkillDir -Recurse -File | ForEach-Object {
             $rel = ($_.FullName.Substring($SkillDir.Length + 1) -replace '\\','/')
-            if ($ignore.ContainsKey($rel)) { return }
+            if (Is-SyncIgnored $rel) { return }
             $localMap[$rel] = Get-SyncFileHash $_.FullName
         }
         $remoteMap = @{}
         Get-ChildItem -LiteralPath $remoteBase -Recurse -File | ForEach-Object {
             $rel = ($_.FullName.Substring($remoteBase.Length + 1) -replace '\\','/')
-            if ($ignore.ContainsKey($rel)) { return }
+            if (Is-SyncIgnored $rel) { return }
             $remoteMap[$rel] = Get-SyncFileHash $_.FullName
         }
         $diff = @()
@@ -399,14 +404,14 @@ function Sync-LauncherScript {
             }
             Get-ChildItem -LiteralPath $remoteBase -Recurse -File | ForEach-Object {
                 $rel = $_.FullName.Substring($remoteBase.Length + 1) -replace '\\','/'
-                if ($ignore.ContainsKey($rel)) { return }
+                if (Is-SyncIgnored $rel) { return }
                 $dst = Join-Path $SkillDir ($rel -replace '/','\')
                 New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
                 Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
             }
             Get-ChildItem -LiteralPath $SkillDir -Recurse -File | ForEach-Object {
                 $rel = ($_.FullName.Substring($SkillDir.Length + 1) -replace '\\','/')
-                if ($ignore.ContainsKey($rel)) { return }
+                if (Is-SyncIgnored $rel) { return }
                 if (-not $remoteMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
             }
             $setupOut = (& (Join-Path $PSHome 'powershell.exe') -NoProfile -ExecutionPolicy Bypass -File (Join-Path $SkillDir 'assets\setup.ps1') -InstallDir $InstallDir -NoShortcut 2>&1 | ForEach-Object { "$_" }) -join "`n"
@@ -429,14 +434,14 @@ function Sync-LauncherScript {
             $srcTree = Join-Path $ghCache 'dsh-launcher'
             Get-ChildItem -LiteralPath $SkillDir -Recurse -File | ForEach-Object {
                 $rel = ($_.FullName.Substring($SkillDir.Length + 1) -replace '\\','/')
-                if ($ignore.ContainsKey($rel)) { return }
+                if (Is-SyncIgnored $rel) { return }
                 $dst = Join-Path $srcTree ($rel -replace '/','\')
                 New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
                 Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
             }
             Get-ChildItem -LiteralPath $srcTree -Recurse -File | ForEach-Object {
                 $rel = ($_.FullName.Substring($srcTree.Length + 1) -replace '\\','/')
-                if ($ignore.ContainsKey($rel)) { return }
+                if (Is-SyncIgnored $rel) { return }
                 if (-not $localMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
             }
             $releaseDir = Join-Path $ghCache ("releases\v" + $lm.version)

@@ -284,6 +284,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.72 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘第三行文案改为「启动器版本 xx 版（有新版/无新版/无法检测）」；Get-GhLauncherVersion 带 token 检测（私有仓库也能检测版本，$ghToken 为空时匿名访问公开仓库）；dsh-sync 新增 Is-SyncIgnored 凭证类通配排除（config.json / credentials / .dsh / *.token 绝不进打包/上传，分发安全红线）；收编 configure-git-credentials.ps1 一键 token 配置脚本（转 UTF-8 BOM、分支修正为 feature/github-sync-v1.1.66）；环境要求-安装指南.md 新增「配置 GitHub token」章节 |
 | dsh-launcher（一键启动本体） | 1.1.71 | 0.1.0-rc.7、0.1.1-rc.2 | 环境清理匹配扩展 kimi-work（2026-08-30）：Start-DshServer 的 PATH 清理由 kimi-desktop|daimon 扩展为 kimi-desktop|daimon|kimi-work，覆盖 kimi 生态的 .kimi-work\bin 注入段，确保从任何宿主启动 DSH 时 web/GUI 环境均无 kimi 残留 |
 | dsh-launcher（一键启动本体） | 1.1.70 | 0.1.0-rc.7、0.1.1-rc.2 | 同步方向判定升级为「版本号优先、时间戳兜底」（2026-08-30，与配套技能一致）：auto 模式先比 _meta.json 的 version（新增 Compare-SyncVersion 语义比较，1.1.9 < 1.1.10），版本高者胜；版本相同再比 publishedAt；两者都相同才按内容修改时间分析并弹窗人工确认；配套 charset-pitfalls 升至 1.1.6（新增「AI 编辑工具编码坑·先检测后选路」章节） |
 | dsh-launcher（一键启动本体） | 1.1.69 | 0.1.0-rc.7、0.1.1-rc.2 | DSH 改用通用 Node.js 运行（2026-08-30）：Start-DshServer 启动 web 前清理宿主 agent（kimi daimon）注入的环境变量——移除 PATH 中的 kimi-desktop/daimon 段、删除 npm_config_prefix，source 模式再把通用 node 目录前置，确保 DSH 服务与 GUI 命令均使用用户安装的 Node；setup.ps1 Find-Node 在干净 PATH 下选中通用 node.exe |

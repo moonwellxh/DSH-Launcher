@@ -112,7 +112,7 @@ $webTimer.Start()
 
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-# 顶部分隔线上方三行：DSH 现有版本（加粗）/ 最新版本（可更新可点）/ 启动托盘版本（可更新/已是最新）
+# 顶部分隔线上方三行：DSH 现有版本（加粗）/ 最新版本（可更新可点）/ 启动器版本（有新版/无新版/无法检测）
 $miCur = New-Object System.Windows.Forms.ToolStripMenuItem
 $miCur.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
 $miCur.Text = "DSH 版本 $(Get-CurrentDshVersion)"
@@ -122,7 +122,7 @@ $miLatest.Enabled = $false
 $miLatest.Text = '最新版本：查询中…'
 $menu.Items.Add($miLatest) | Out-Null
 $miLauncher = New-Object System.Windows.Forms.ToolStripMenuItem
-$miLauncher.Text = "启动托盘 $(Get-LauncherVersion) 版（检查中…）"
+$miLauncher.Text = "启动器版本 $(Get-LauncherVersion) 版（检查中…）"
 $menu.Items.Add($miLauncher) | Out-Null
 $menu.Items.Add('-') | Out-Null
 $miOpen  = $menu.Items.Add('打开 Web UI')
@@ -176,11 +176,11 @@ $verCheckTimer.Add_Tick({
         $ghVer = Get-GhLauncherVersion -TimeoutSec 8
         $lv = Get-LauncherVersion
         if ($ghVer -and (Test-NewerVersion $lv $ghVer)) {
-            $miLauncher.Text = "启动托盘 $lv 版（点击可更新）"
+            $miLauncher.Text = "启动器版本 $lv 版（有新版）"
         } elseif ($ghVer) {
-            $miLauncher.Text = "启动托盘 $lv 版（已是最新）"
+            $miLauncher.Text = "启动器版本 $lv 版（无新版）"
         } else {
-            $miLauncher.Text = "启动托盘 $lv 版（检查失败）"
+            $miLauncher.Text = "启动器版本 $lv 版（无法检测）"
         }
     } catch {}
 })
