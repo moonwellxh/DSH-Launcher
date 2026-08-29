@@ -31,6 +31,7 @@ REM --- 获取新 zip：拖拽 %1 → 原 assets 目录 → 提示输入 ---
 set "ZIP=%~1"
 if not defined ZIP if exist "%ASSETS_DIR%dsh-launcher__skillhub.zip" set "ZIP=%ASSETS_DIR%dsh-launcher__skillhub.zip"
 if not defined ZIP set /p "ZIP=请输入新 zip 的完整路径: "
+set "ZIP=%ZIP: =%"
 if not exist "%ZIP%" (
     echo 错误：找不到 zip：%ZIP%
     pause
@@ -38,11 +39,11 @@ if not exist "%ZIP%" (
 )
 
 REM --- 校验 zip（含 dsh-launcher\SKILL.md 才是有效技能包） ---
-REM 中文路径坑：bsdtar 对含中文的用户名/路径会失败（乱码），tar 失败则用 PowerShell 降级校验
+REM 中文路径坑：bsdtar 对含中文的用户名/路径会失败（乱码），tar 失败则改用 .NET ZipFile 降级校验（对路径编码免疫）
 set "DSH_UPD_ZIP=%ZIP%"
-C:\Windows\System32\tar.exe -tf "%ZIP%" 2>nul | findstr /i "dsh-launcher/SKILL.md" >nul
+C:\Windows\System32\tar.exe -tf "%ZIP%" 2>nul | findstr /i "dsh-launcher/SKILL.md dsh-launcher\SKILL.md" >nul
 if errorlevel 1 (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "exit [int](-not ((& 'C:\Windows\System32\tar.exe' -tf $env:DSH_UPD_ZIP 2>$null) -match 'dsh-launcher/SKILL.md'))"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compression.ZipFile]::OpenRead($env:DSH_UPD_ZIP); $ok=[bool]($z.Entries ^| Where-Object { ($_.FullName -replace '\\','/') -eq 'dsh-launcher/SKILL.md' }); $z.Dispose(); exit [int](-not $ok)"
     if errorlevel 1 (
         echo 错误：%ZIP% 不是有效的 dsh-launcher 技能包（缺少 SKILL.md）。
         pause
@@ -71,14 +72,31 @@ if not exist "%UPD%\dsh-launcher\SKILL.md" (
     exit /b 1
 )
 
-REM --- 用新内容覆盖技能目录 ---
+REM --- 新版必含文件清单断言（覆盖前最后一道防线） ---
+set "MISSING="
+if not exist "%UPD%\dsh-launcher\SKILL.md" set "MISSING=!MISSING! SKILL.md"
+if not exist "%UPD%\dsh-launcher\assets\setup.ps1" set "MISSING=!MISSING! assets\setup.ps1"
+if defined MISSING (
+    echo 错误：新版技能包缺少必含文件：!MISSING!
+    echo 已中止，技能目录未被改动。
+    pause
+    exit /b 1
+)
+
+REM --- 用新内容覆盖技能目录（/MIR 镜像同步，新版移除的旧文件一并清除） ---
 echo 正在更新技能目录：%SKILL_DIR%
-xcopy /e /y /q /i "%UPD%\dsh-launcher\*" "%SKILL_DIR%\" >nul
+robocopy "%UPD%\dsh-launcher" "%SKILL_DIR%" /MIR /NFL /NDL /NJH >nul
+if errorlevel 8 (
+    echo 覆盖技能目录失败（robocopy 退出码 %ERRORLEVEL%）。
+    pause
+    exit /b 1
+)
 
 REM --- 运行新 setup.ps1（自动按清单应用补丁） ---
 set "INSTALL_DIR=%~2"
 if not defined INSTALL_DIR if exist "%ASSETS_DIR%install-dir.txt" set /p INSTALL_DIR=<"%ASSETS_DIR%install-dir.txt"
 if not defined INSTALL_DIR set /p "INSTALL_DIR=请输入安装目录（直接回车使用默认 %USERPROFILE%\DSH）："
+set "INSTALL_DIR=%INSTALL_DIR: =%"
 if not defined INSTALL_DIR set "INSTALL_DIR=%USERPROFILE%\DSH"
 echo 正在运行 setup.ps1（启动器安装目录：%INSTALL_DIR%）...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SKILL_DIR%\assets\setup.ps1" -InstallDir "%INSTALL_DIR%"

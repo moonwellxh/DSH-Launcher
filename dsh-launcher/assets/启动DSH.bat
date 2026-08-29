@@ -46,6 +46,7 @@ if /i "%~1"=="3" ( set "defChoice=3" & set "defText=启动 DSH 无界面模式 (Headles
 if /i "%~1"=="0" ( set "defChoice=0" & set "defText=退出" )
 set "choice="
 set /p "choice=请输入编号 [回车=%defChoice%（%defText%）]: "
+set "choice=%choice: =%"
 
 if not defined choice set "choice=%defChoice%"
 

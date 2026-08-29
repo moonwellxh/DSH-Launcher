@@ -23,7 +23,7 @@ Add-Type -AssemblyName System.Drawing
 $mutex = New-Object System.Threading.Mutex($false, 'Local\DSH-Tray-3080')
 if (-not $mutex.WaitOne(0, $false)) {
     # 残留托盘（旧代码/图标丢失的僵尸）占着互斥锁：结束它们后接管，保证双击必定出新托盘
-    Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match '-File\s+.*DSH-tray\.ps1' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match '-File\s+.*DSH-tray\.ps1' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 800
     $mutex = New-Object System.Threading.Mutex($false, 'Local\DSH-Tray-3080')
     $owned = $false
@@ -87,6 +87,10 @@ $webTimer.Add_Tick({
                 $script:proc = Start-DshServer
                 if ($null -eq $script:proc) {
                     $notify.ShowBalloonTip(4000, 'DSH', '__MODE_WEB_WATCHDOG_FAIL__', 'Error')
+                } else {
+                    # 看护重启成功：重置自动开浏览器标记；就绪 Timer 若已停止（如旧逻辑在进程退出时 Stop）则重新启动
+                    $script:browserOpened = $false
+                    if ($null -ne $readyTimer -and -not $readyTimer.Enabled) { $readyTimer.Start() }
                 }
             }
         } else {
@@ -199,7 +203,7 @@ $miLauncher.Add_Click({
 $notify.Add_DoubleClick({ param($s, $e) try { Open-Url $webUrl } catch { Start-Process $webUrl } })
 
 # 启动状态气泡（透明度）
-$notify.ShowBalloonTip(3000, 'DSH', $(if ($listener -eq 0) { "正在启动 DSH Web（PID $($proc.Id)）..." } else { "DSH Web 已在运行（PID $listener）" }), 'Info')
+$notify.ShowBalloonTip(3000, 'DSH', $(if ($listener -eq 0) { if ($null -eq $proc) { '正在启动 DSH Web...' } else { "正在启动 DSH Web（PID $($proc.Id)）..." } } else { "DSH Web 已在运行（PID $listener）" }), 'Info')
 
 # 非阻塞就绪检查（Timer，不卡消息循环）
 if ($OpenBrowser) {
@@ -211,8 +215,10 @@ $readyTimer = New-Object System.Windows.Forms.Timer
             $ok = $false
             if ($null -ne $script:proc) {
                 $script:proc.Refresh()
-                if ($script:proc.HasExited) { $readyTimer.Stop(); return }
-                if (Test-DshReady) { $ok = $true }
+                # 进程退出不再永久停止 Timer：看护可能自动重启成功，继续等待端口监听 + 就绪日志
+                if ($script:proc.HasExited) {
+                    if ((Get-DshListenerPid) -ne 0 -and (Test-DshReady)) { $ok = $true }
+                } elseif (Test-DshReady) { $ok = $true }
             } else {
                 try { $r = Invoke-WebRequest -Uri $webUrl -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 600) { $ok = $true } } catch {}
             }

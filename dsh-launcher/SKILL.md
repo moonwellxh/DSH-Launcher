@@ -125,7 +125,8 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
   含本技能全部编码约定与踩坑记录），动手前对照编码表，不要等出乱码再查。
 - **冷启动**：源码树模式优先用已构建的 `apps\cli\lib\bin.js`（免 tsx，约 4s），
 - **0xc0000142（cmd/node 偶发"应用程序无法正常启动"）**：DLL 初始化失败的瞬时现象，多为**快速连续拉起多个进程**（或系统瞬时状态/其他安全软件扫描）触发，非持续故障。处理：避免密集拉进程；托盘版本读取已改为直接读 package.json（免 node 进程）；如频繁出现再排查系统 DLL/安全软件。- **快捷方式图标不更新**：`.lnk` 指向的 `.ico` 文件本身没问题时，是 Windows 图标缓存未刷新。解决顺序：先 `ie4uinit.exe -show`；仍不更新则结束 Explorer（`taskkill /f /im explorer.exe`）→ 删除 `%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache_*.db` → 重启 Explorer（`start explorer.exe`）。
-- **GitHub 同步（同步守卫，1.1.66 发布级重写）**：托盘「一键同步」以仓库源树 `dsh-launcher/` 为比对对象，逐文件
+- **GitHub 同步（同步守卫，1.1.66 发布级重写）**：同步逻辑**唯一实现为 `assets\dsh-sync.ps1`**，托盘「一键同步」菜单调用它执行
+  （托盘生成物内不再内嵌同步实现，原 `tmpl\parts\70-sync-*.ps1` 内嵌副本已删除）。同步以仓库源树 `dsh-launcher/` 为比对对象，逐文件
   **内容级比对（不信任缓存/版本号）**——文本文件先归一化 CRLF→LF 再 SHA256（git `core.autocrlf` 会把检出文件
   变成 CRLF，与 zip 内 LF"同内容不同哈希"，必须归一化；二进制如 zip/ico/png 保持原始字节）；**跳过机器特定文件**
   （`assets/install-dir.txt`）；方向按双方实际 `_meta.json` 时间戳判定；时间戳相同但内容不同时按 **git 提交时间 vs
@@ -162,8 +163,8 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
   源码树模式用绝对 node 路径，无此问题。**已装机器需重跑 setup.ps1 重新生成 DSH-tray.ps1，
   并先结束旧 buggy 托盘进程再验证（旧进程的看护仍会触发循环）。**
 - **接管误杀收窄**：互斥锁接管原按 `'DSH-tray\.ps1'` 匹配命令行，会误杀**任何**命令行里
-  含该字样的 powershell（排查脚本等无关进程）。已收窄为 `-File\s+[^\s]*DSH-tray\.ps1`
-  （只杀真正以 `-File` 方式运行托盘脚本的进程）。
+  含该字样的 powershell（排查脚本等无关进程）。现行为 `-File\s+.*DSH-tray\.ps1`
+  （只杀真正以 `-File` 方式运行托盘脚本的进程；`.*` 版同时支持带空格的脚本路径）。
 
 ## 补丁自动载入清单（assets\补丁管理\）
 `assets\补丁管理\` 是本技能携带的 **DSH 补丁自动载入清单**：
@@ -190,7 +191,7 @@ package.json 版本，与清单 `compatibleDsh` 字段比对，不在列表即�
 `setup.ps1`（或 `补丁引擎-应用还原检查.ps1`）即可恢复**；
 `补丁引擎-应用还原检查.ps1 -Restore` 可一键还原官方原状。
 - 补丁备份默认在 `~\.dsh\patches-backup\<补丁id>\`（可用 `-BackupRoot` 覆盖）；
-- **幂等与验证**：`setup.ps1` / `重打全部补丁.bat` 均可重复运行，不会重复打或损坏（已应用自动跳过）；验证补丁是否生效：跑 `补丁引擎-应用还原检查.ps1 -CheckOnly`（列计划即已应用清单）；还原用 `补丁引擎-应用还原检查.ps1 -Restore`。注意：还原成功后备份目录会被删除，故「目录存在=已应用」不再可靠，以「备份 manifest 非空/含备份文件」为准。
+- **幂等与验证**：`setup.ps1` / `重打全部补丁.bat` 均可重复运行，不会重复打或损坏（已应用自动跳过）；验证补丁是否生效：跑 `补丁引擎-应用还原检查.ps1 -CheckOnly`（列计划即已应用清单）；还原用 `补丁引擎-应用还原检查.ps1 -Restore`。注意：还原成功后备份清单会被清空为 `{}` 且备份目录会被删除，故「目录存在=已应用」不再可靠；引擎的「是否已应用」判断以三条件齐备为准——**备份目录存在 + `backup-manifest.json` 存在 + 清单解析后非空（含备份条目）**。
 - 每个补丁一个独立子目录 `补丁管理\补丁NN-功能名\`，含安装脚本 / 还原脚本 / `载荷文件\`
   （`id` 决定备份目录名保持稳定，`dir` 决定源码子目录名可随意起名，详见目录内 README）；
 - **清单控制安装**：`自动载入清单-manifest.json` 里每个补丁的 `enabled` 字段决定是否随 `setup.ps1` / `重打全部补丁.bat` 自动安装：`true` = 安装；`false` = **挂起（跳过不装）**。需要临时停用某补丁（如与新版本冲突）时置 `false` 即可，改回 `true` 再跑一次即恢复；不必删除补丁目录。
@@ -237,10 +238,10 @@ AI 直接往 `D:\DSHS\DSH-tray.ps1`（正在运行的生成物）注入诊断代
 3. 重新生成后**先做语法验证**（`[scriptblock]::Create((Get-Content -Raw))`）再重启托盘；
 4. 重启托盘前**先备份当前良版生成物**（如复制 DSH-tray.ps1.bak）；
 5. 托盘进程用托盘右键「重启 DSH」或结束进程后重新 `Start-Process`，避免注入式修改运行中脚本；
-6. 修改前**先备份 Z 盘良包**（`dsh-launcher__skillhub.vX.Y.Z-OK.bak.zip`），防止覆盖坏包；
+6. 修改前**先备份当前版本良包**（git 历史与 `releases\<版本>\` 目录即天然留档；本地改动未提交前先单独复制一份 zip/源树备份），防止覆盖坏包；
 7. 临时诊断代码**只能放模板或单独测试脚本**，绝不写进生成物后长期残留。
 
-**判断良包标准**：Z 盘包 `testzip()` 无损坏、模板含完整功能（Open-DshApp/pwaGuideShown/
+**判断良包标准**：归档包（`releases\<版本>\` 内的 zip）`testzip()` 无损坏、模板含完整功能（Open-DshApp/pwaGuideShown/
 IsZoomed/双击 Open-Url）、setup.ps1 BOM 合规、内嵌配套版本与配套目录一致。
 
 ## 已装机器如何升级
@@ -251,7 +252,7 @@ IsZoomed/双击 Open-Url）、setup.ps1 BOM 合规、内嵌配套版本与配套
 powershell -NoProfile -ExecutionPolicy Bypass -File "<技能目录>\assets\setup.ps1" -InstallDir "<安装目录>" -NoShortcut
 ```
 
-`setup.ps1` 一次完成：① 重新生成启动脚本；② **自动按 `assets\补丁管理\` 清单应用补丁**（幂等，已应用会跳过）。补丁仅在 DSH 重装/升级导致失效时才需要重打；验证方式：`~\.dsh\patches-backup\<补丁id>\` 存在即已应用，或跑 `assets\补丁管理\补丁引擎-应用还原检查.ps1 -CheckOnly`。
+`setup.ps1` 一次完成：① 重新生成启动脚本；② **自动按 `assets\补丁管理\` 清单应用补丁**（幂等，已应用会跳过）。补丁仅在 DSH 重装/升级导致失效时才需要重打；验证方式：`~\.dsh\patches-backup\<补丁id>\` 目录存在且 `backup-manifest.json` 非空（含备份条目）即已应用，或跑 `assets\补丁管理\补丁引擎-应用还原检查.ps1 -CheckOnly`。
 
 **升级/打补丁/换前端插件后必须硬刷新浏览器（Ctrl+F5）重新加载 http://127.0.0.1:3080**：
 DSH 前端是 client-plugin 图（index.html 的 `__DSH_BOOT__` 指向带 rev 哈希的插件 JS），
@@ -261,13 +262,13 @@ DSH 前端是 client-plugin 图（index.html 的 `__DSH_BOOT__` 指向带 rev �
 重载才正确。给其他机器升级时的标准说法与同类情况清单见
 `assets\升级后重新渲染-标准说法.md`。
 
-GitHub 仓库（`moonwellxh/DSH-Launcher`，main 分支）是各台机器修改的合集；仓库内**解压源树 `dsh-launcher/` 为维护对象**，
+GitHub 仓库（`moonwellxh/DSH-Launcher`，`feature/github-sync-v1.1.65` 分支）是各台机器修改的合集；仓库内**解压源树 `dsh-launcher/` 为维护对象**，
 zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按目录留档）。已在用的机器按下面规则对齐：
 
 | 本次改了什么 | 已装机器要做的 |
 |---|---|
 | 只改 `SKILL.md` / `_meta.json` / `_icon.png` | 重装技能：解压 zip 覆盖 `~/.agents/skills\dsh-launcher` 即可 |
-| 改了 setup.ps1 或 	mpl\*.tmpl | 重装技能 + 重跑一次 setup.ps1（重新生成安装目录里的启动脚本） |
+| 改了 setup.ps1 或 `assets\tmpl\` 模板（`parts\*.ps1` / `mode-*.json`） | 重装技能 + 重跑一次 setup.ps1（重新生成安装目录里的启动脚本） |
 | 改了 `assets\补丁管理\*`（补丁载荷 / 清单 / 引擎） | 重装技能 + 重跑一次 `setup.ps1`（或直接跑 `assets\补丁管理\补丁引擎-应用还原检查.ps1`） |
 | 想一键完成上面任意一项 | 双击 `assets\更新安装.cmd`（新 zip 放 assets 目录或拖入），自动「覆盖技能 + 重跑 setup.ps1（自动应用补丁）」 |
 
@@ -281,6 +282,10 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.70 | 0.1.0-rc.7、0.1.1-rc.2 | 同步方向判定升级为「版本号优先、时间戳兜底」（2026-08-30，与配套技能一致）：auto 模式先比 _meta.json 的 version（新增 Compare-SyncVersion 语义比较，1.1.9 < 1.1.10），版本高者胜；版本相同再比 publishedAt；两者都相同才按内容修改时间分析并弹窗人工确认；配套 charset-pitfalls 升至 1.1.6（新增「AI 编辑工具编码坑·先检测后选路」章节） |
+| dsh-launcher（一键启动本体） | 1.1.69 | 0.1.0-rc.7、0.1.1-rc.2 | DSH 改用通用 Node.js 运行（2026-08-30）：Start-DshServer 启动 web 前清理宿主 agent（kimi daimon）注入的环境变量——移除 PATH 中的 kimi-desktop/daimon 段、删除 npm_config_prefix，source 模式再把通用 node 目录前置，确保 DSH 服务与 GUI 命令均使用用户安装的 Node；setup.ps1 Find-Node 在干净 PATH 下选中通用 node.exe |
+| dsh-launcher（一键启动本体） | 1.1.68 | 0.1.0-rc.7、0.1.1-rc.2 | 双击托盘 PWA 打开链路易损性修复（2026-08-30 实测案例驱动）：① **Edge 检测改用 `[Environment]::GetFolderPath`**——托盘/安装若从 PATH 被精简的宿主进程（自动化 agent shell）启动，`$env:ProgramFiles` 为 null 会让 Open-DshApp 抛异常静默退化成开标签页（本次"100% 开标签"主根因）；② **Edge 152 起 `--app-id` 在已有浏览器会话时会被转发成普通标签页**——冷启动改为先试 `--app-id`、失败用 `--app=URL` 兜底（应用模式窗口，无需注册）；③ 窗口匹配只认 PWA/应用模式窗口（排除 `- Microsoft Edge` 结尾的普通浏览器窗口，防标签页抢焦点）；④ 两次尝试仍无应用窗口则认输回退开普通标签页（保证双击一定有页面出来）；⑤ 桌面 DSH应用.lnk 同步改 `--app=URL`；⑥ **setup.ps1 的 Find-Node 排除 agent 环境 node.cmd 包装器**——若在 PATH 被注入的宿主（kimi-desktop command-process-owner\bin\node.cmd）里跑安装，渲染进托盘的 node.cmd 依赖宿主私有环境变量，经 Explorer/启动文件夹启动时变量缺失导致 web 起不来（「反复启动失败」）；现过滤为只选真 node.exe（排除 command-process-owner/daimon-share 路径），回退 `$env:KIMI_DESKTOP_RUNTIME_NODE` 真 node.exe，最后才用 node.cmd 并打警告 |
+| dsh-launcher（一键启动本体） | 1.1.67 | 0.1.0-rc.7、0.1.1-rc.2 | 代码审查 bug 修复批次（B1–B24）：补丁引擎改子进程调用（exit 不再中止 setup）；默认分支三处收敛 `feature/github-sync-v1.1.65`；显式同步方向不再被时间戳翻转、时区基准统一 UTC；就地安装.bat 加技能目录守卫防自毁；更新安装.cmd zip 校验降级改 .NET 实现、覆盖改 robocopy /MIR；托盘网络查询超时生效、readyTimer 不再永久放弃；删除死代码（70-sync-*.ps1、两个废弃 .tmpl）；补丁引擎 $LASTEXITCODE 清零 +「已应用」口径收紧；文档口径五处对齐。配套技能 zip 文档同步为 GitHub-first（batch-files 1.1.4 / charset-pitfalls 1.1.5 / zip-archive-ops 1.0.5） |
 | dsh-launcher（一键启动本体） | 1.1.66 | 0.1.0-rc.7、0.1.1-rc.2 | 1.1.66 「一键同步」发布级重写：repo/branch/token 可配置（env > `~\.dsh\gh-sync\config.json` > 默认，同步分支改 `feature/github-sync-v1.1.65`）；系统代理自动探测 + 直连↔代理双路回退（命令级 -c 注入不改全局 git）；git 非交互防弹窗（GIT_TERMINAL_PROMPT=0 + GCM_INTERACTIVE=Never），失败分类为可操作提示（未装 git/认证缺失失效/仓库分支 404/网络不通/非快进）；文本比对归一化 CRLF→LF（修 autocrlf 同内容不同哈希 bug）、跳过机器特定文件、时间戳相同按 git 提交时间分析（修 clone 后 mtime 误判）；上传发布 5 个 zip（主包+4 配套）到 `releases\<版本>\`、`HEAD:<branch>` push、token 经 http.extraheader 仅内存注入；互斥锁防并发、缓存损坏自愈、结构契约校验； |
 | dsh-launcher（一键启动本体） | 1.1.65 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘所用 RPC 在两版均存在；`_meta.json` 的 `compatibleDsh` 字段同步维护；1.1.48 起配套技能版本比较改为「版本号优先、时间戳兜底」；1.1.51 完成 P0-P2 全面修复（补丁引擎 $LASTEXITCODE 陷阱/还原 enabled、托盘重启链编码、更新安装.cmd 降级等）；1.1.52 修复还原失败时 manifest 丢失成功项的回归 + 文档验证口径同步；1.1.53-57 托盘双击/「打开 Web UI」优先打开已装 PWA 主应用（SC_RESTORE 聚焦 + IsZoomed 最大化保护 + 未装引导式安装）；1.1.58 固化调试纪律铁律（绝不在运行中生成物上直接编辑，改模板→重新生成→验证→重启，先备份良包）；1.1.59 「重启 DSH」改版：杀 web + 按标题关闭 DSH 浏览器窗口（CloseDshWindows，WM_CLOSE 优雅关闭，不碰其他窗口）+ helper 接力重启托盘（-OpenBrowser 就绪后自动重开 PWA），所有 Start-Process powershell 统一加结尾 -WindowStyle Hidden 消除命令行窗口闪现；1.1.60 修复托盘右键「最新版本」查询失败：PS5.1 默认 TLS 非 1.2 + 系统代理（Clash 7897）对 npm HTTPS 转发不可靠 → Get-LatestDshInfo 强制 TLS1.2 + 优先直连（WebClient.Proxy=$null）、失败回退系统代理；1.1.61 一键托盘入口全面去闪烁：`启动DSH-托盘.cmd` 顶部加自隐藏包装（`run-hidden.vbs` 经 wscript 以隐藏窗口重入，`__DSH_HIDDEN` 标记防重入），新增零窗口双击入口 `启动DSH-托盘.vbs`（wscript 直启隐藏 powershell），setup.ps1 部署新 vbs 并更新产物清单；1.1.62 托盘右键第三行文案优化：「一键启动脚本版本」→「一键同步启动脚本」（模板/文档/生成物同步；内容变更同步 bump _meta 版本时间戳，避免同步误判人工复核）；1.1.64 同步冲突处理（用户确认制）：时间戳相同但内容不同时，按实际文件修改时间分析并弹窗展示分析/建议，由用户确认方向（上传/拉取/取消）后才执行，绝不自动覆盖良包；1.1.65 同步存档全面切换 GitHub：弃用 Z: 网络盘（NAS）存档，托盘「一键同步」改为 git 双向同步 `moonwellxh/DSH-Launcher`（clone/fetch 工作副本 `~\.dsh\gh-sync\DSH-Launcher`，逐文件 SHA256 比对逻辑不变；上传=更新源树 + 重打包 zip 到 `releases\<版本>\` + git add/commit/push，git 历史天然备份旧版，不再手工备份旧包；拉取=与仓库源树比对后应用并重跑 setup；git 全程非交互 GIT_TERMINAL_PROMPT=0，缺凭据立即报错） |
 | 档案柜 v1 补丁 | 0.1.1 | **仅 0.1.1-rc.2** | 载荷绑定版本；清单 `compatibleDsh` 字段校验 |
@@ -302,6 +307,20 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 （如 `releases/v1.1.66/`），随后 git commit + push。托盘右键第三行「启动托盘版本」可自动完成
 「源树更新 + 重打包 zip 到 releases\<版本>\ + 提交推送」；**大版本更新前，当前版本的内容已按
 版本目录留档在 `releases\v<旧版本>\`**（git 历史也是天然备份）。
+
+### 编程规范：泛化性与发布就绪（用户规定，2026-08-30 起执行，优化项记入待办、本次不改）
+
+- **任何写进成品的具体取值都必须能泛化**：路径、用户名、盘符、应用私有运行时路径等，一律
+  在目标机器上探测/渲染，或提供可配置的兜底，**禁止把本机才有的取值当作通用解**。
+  反例（2026-08-30）：Find-Node 在无真 node.exe 时回退到
+  `%LocalAppData%\Programs\kimi-desktop\...\runtime\node.exe`——那是 kimi-desktop 的私有运行时，
+  其他机器/卸载后即失效；虽属安装期按机渲染（非源码写死），仍不符合发布要求。
+- **按"以后要发布给任意用户"的标准写代码**：优先级应为「用户正式安装的 Node.js（PATH）＞
+  常见版本管理器（nvm 等）＞明确提示用户安装 Node.js」，应用私有运行时最多作为带警告的
+  最后兜底，且托盘启动失败时应能自愈重探测而不是直接放弃。
+- 后续优化项（暂不实施）：托盘启动时对渲染出的 node/DSH 路径做存在性校验，失效则重探测并
+  重写自身配置；Find-Node 增加 nvm/官方安装目录探测；无可用 node 时给出「请安装 Node.js」的
+  明确指引而非静默用私有运行时。
 
 ### 配套技能清单与维护（必须同步，缺一不可）
 

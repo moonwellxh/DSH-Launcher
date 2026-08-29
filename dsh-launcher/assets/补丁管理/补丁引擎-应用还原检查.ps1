@@ -1,11 +1,11 @@
 ﻿# ============================================================
-#  apply-patches.ps1 - DSH 补丁自动载入引擎
-#  读取 manifest.json（自动载入清单），按顺序应用或还原补丁。
+#  补丁引擎-应用还原检查.ps1 - DSH 补丁自动载入引擎
+#  读取 自动载入清单-manifest.json，按顺序应用或还原补丁。
 #
 #  用法：
-#    powershell -NoProfile -ExecutionPolicy Bypass -File apply-patches.ps1                 # 应用清单中启用的补丁
-#    powershell -NoProfile -ExecutionPolicy Bypass -File apply-patches.ps1 -Restore        # 还原所有已应用补丁
-#    powershell -NoProfile -ExecutionPolicy Bypass -File apply-patches.ps1 -CheckOnly      # 只列出将做什么
+#    powershell -NoProfile -ExecutionPolicy Bypass -File 补丁引擎-应用还原检查.ps1                 # 应用清单中启用的补丁
+#    powershell -NoProfile -ExecutionPolicy Bypass -File 补丁引擎-应用还原检查.ps1 -Restore        # 还原所有已应用补丁
+#    powershell -NoProfile -ExecutionPolicy Bypass -File 补丁引擎-应用还原检查.ps1 -CheckOnly      # 只列出将做什么
 #  可选参数：
 #    -Manifest   <json 路径>   默认：本脚本同目录 manifest.json
 #    -ProfileDir <目录>        默认：~\.dsh\profiles\node_modules
@@ -68,6 +68,31 @@ if (Test-Path -LiteralPath $dshPkg) {
 }
 if ($currentDshVersion) { Write-Host "当前 DSH 版本 : $currentDshVersion" }
 
+# ---------- 警告级环境检查（仅提示风险，不阻断；引擎会被 setup.ps1 非交互调用） ----------
+# ① dsh web 正在运行时打补丁/还原，运行中的进程可能缓存旧文件或持锁，导致补丁不生效或状态不一致；
+# ② profile 的 @deepseek-ai 若为 junction/reparse point（2026-08-23 事故根因环境：指向源码树
+#    构建产物），打补丁会同时改坏其指向的目标目录。
+try {
+    $dshWebProcs = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction Stop |
+        Where-Object { $_.CommandLine -match '(^|\s|""|/|\\)dsh([^\s""]*)?\s+web(\s|$)|bin\.js[^\r\n]*\sweb(\s|$)' })
+    if ($dshWebProcs.Count -gt 0) {
+        Write-Host '警告：检测到 dsh web 进程正在运行，应用/还原补丁前建议先停止 dsh web，' -ForegroundColor Yellow
+        Write-Host '      否则补丁可能不生效或造成运行状态不一致（仅警告，不阻断）。' -ForegroundColor Yellow
+    }
+} catch {}
+try {
+    $dsAiDir = Join-Path $ProfileDir '@deepseek-ai'
+    if (Test-Path -LiteralPath $dsAiDir) {
+        $dsAiItem = Get-Item -LiteralPath $dsAiDir -Force -ErrorAction Stop
+        $isReparse = ($null -ne $dsAiItem.LinkType) -or [bool]($dsAiItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        if ($isReparse) {
+            $linkKind = if ($dsAiItem.LinkType) { $dsAiItem.LinkType } else { 'ReparsePoint' }
+            Write-Host "警告：profile 的 @deepseek-ai 是 $linkKind（重解析点，可能指向源码树构建产物）——" -ForegroundColor Yellow
+            Write-Host '      打补丁/还原会同时改动其指向的目标目录，请确认这是预期行为（仅警告，不阻断）。' -ForegroundColor Yellow
+        }
+    }
+} catch {}
+
 if ($Restore) {
     Step '还原全部已应用补丁（逆序）...'
     for ($i = $patches.Count - 1; $i -ge 0; $i--) {
@@ -76,7 +101,17 @@ if ($Restore) {
         # SKILL.md 升级流程要求先置 enabled=false 挂起，此时还原必须仍能回滚
         $backupDir = Join-Path $BackupRoot $p.id
         $backupManifest = Join-Path $backupDir 'backup-manifest.json'
+        # 「是否已应用」口径收紧：备份目录存在 + 备份清单存在 + 清单解析后非空（含备份条目），
+        # 三者齐备才算已应用。还原成功后清单被清空为 {}、备份目录被删除，仅凭目录/清单存在不再可靠。
         $wasApplied = (Test-Path -LiteralPath $backupDir) -and (Test-Path -LiteralPath $backupManifest)
+        if ($wasApplied) {
+            try {
+                $bmObj = [System.IO.File]::ReadAllText($backupManifest, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+                $wasApplied = (@($bmObj.PSObject.Properties).Count -gt 0)
+            } catch {
+                $wasApplied = $false
+            }
+        }
         if (-not $wasApplied) {
             Write-Host "  跳过还原（未应用过）：$($p.id)" -ForegroundColor Yellow
             continue
@@ -93,6 +128,9 @@ if ($Restore) {
         $env:DSH_PATCH_BACKUP_DIR = Join-Path $BackupRoot $p.id
         $env:DSH_PATCH_PROFILE_DIR = $ProfileDir
         try {
+            # 清零上游残留的 $LASTEXITCODE（如 setup.ps1 同会话调用时上游 cmd 的退出码），
+            # 防止脚本执行完读到非 0 残留而把补丁误判失败
+            $global:LASTEXITCODE = $null
             & $restoreScript
             # $LASTEXITCODE 陷阱：PowerShell 脚本调用不设置该变量（全新进程为 $null），
             # 只有脚本内显式 exit <非0> 才应中断；用 truthy 判断避免 $null -ne 0 恒真
@@ -147,6 +185,8 @@ foreach ($p in $patches) {
     $env:DSH_PATCH_BACKUP_DIR = $backupDir
     $env:DSH_PATCH_PROFILE_DIR = $ProfileDir
     try {
+        # 同还原分支：调用前清零 $LASTEXITCODE，避免上游残留污染失败判断
+        $global:LASTEXITCODE = $null
         & $install
         # $LASTEXITCODE 陷阱同还原分支：truthy 判断，仅脚本显式 exit 非 0 才中断
         if ($LASTEXITCODE) { exit $LASTEXITCODE }

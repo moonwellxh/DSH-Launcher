@@ -23,9 +23,10 @@ function Step([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
 function Find-DshSourceTree {
     # 直接候选：用户目录与各盘根下的 deepseek-harness
     $cands = @((Join-Path $env:USERPROFILE 'deepseek-harness'))
-    foreach ($d in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
-        if ($d.Name -match '^[A-Za-z]$') { $cands += (Join-Path $d.Root 'deepseek-harness') }
-    }
+    # 仅固定盘做候选/递归探测（网络映射盘掉线会卡顿；网络盘需显式 -InstallDir 指定）
+    $fixedRoots = @(Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.DeviceID + '\' })
+    foreach ($root in $fixedRoots) { $cands += (Join-Path $root 'deepseek-harness') }
     foreach ($c in ($cands | Select-Object -Unique)) {
         if (Test-Path -LiteralPath (Join-Path $c 'apps\cli\lib\bin.js')) { return $c }
     }
@@ -42,10 +43,26 @@ function Find-DshSourceTree {
 }
 
 function Find-Node {
-    $n = Get-Command node -ErrorAction SilentlyContinue
-    if ($n -and $n.Source) { return $n.Source }
+    # 必须返回「真 node.exe」：托盘会写入渲染出的路径并经 Explorer/启动文件夹启动，
+    # 若写入 agent 环境的 node.cmd 包装器（如 kimi-desktop command-process-owner\bin\node.cmd），
+    # 正常用户环境缺少其依赖的环境变量，web 会起不来（曾引发「反复启动失败」）。
+    $isBadPath = { param($p) $p -match 'command-process-owner|daimon-share' }
+    $all = @(Get-Command node -All -ErrorAction SilentlyContinue | Where-Object { $_.Source })
+    # 首选：真 node.exe 且不在 agent 包装目录下
+    $exe = @($all | Where-Object { $_.Source -like '*.exe' -and -not (& $isBadPath $_.Source) } | Select-Object -First 1)
+    if ($exe) { return $exe[0].Source }
+    # 回退：kimi-desktop 运行时自带的真 node.exe（本机常驻，安全）
+    if ($env:KIMI_DESKTOP_RUNTIME_NODE -and (Test-Path -LiteralPath $env:KIMI_DESKTOP_RUNTIME_NODE)) {
+        return $env:KIMI_DESKTOP_RUNTIME_NODE
+    }
     $wb = Get-ChildItem "$env:USERPROFILE\.workbuddy\binaries\node\versions\*\node.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($wb) { return $wb.FullName }
+    # 最后手段：node.cmd（仅当确无 .exe 可选），打警告
+    $cmd = @($all | Where-Object { $_.Source -like '*.cmd' -and -not (& $isBadPath $_.Source) } | Select-Object -First 1)
+    if ($cmd) {
+        Write-Host "警告：未找到真 node.exe，回退使用 $($cmd[0].Source)。若托盘启动的 DSH Web 起不来，请安装 Node.js。" -ForegroundColor Yellow
+        return $cmd[0].Source
+    }
     return $null
 }
 
@@ -64,7 +81,8 @@ $dshCmdPath = ''
 if ($mode -eq 'path') {
     $c = Get-Command dsh.cmd -ErrorAction SilentlyContinue
     if ($c) { $dshCmdPath = $c.Source }
-    if (-not $dshCmdPath) { $dshCmdPath = $dshPath }
+    # 不回退到 $dshPath：Get-Command dsh 可能解析到 dsh.ps1（ExternalScript 优先），
+    # 写进 .cmd 包装器无法执行；保持为空让下方「无法解析则中止」的显式报错生效（B5）。
 }
 
 if ($CheckOnly) {
@@ -102,7 +120,9 @@ if (-not $InstallDir) {
 Step "安装目录：$InstallDir（模式：$mode）"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 # 记录安装目录到技能（供 assets 里的启动器跨机器定位托盘脚本）；UTF-8 无 BOM 跨编码通用
-[System.IO.File]::WriteAllText((Join-Path $scriptDir 'install-dir.txt'), $InstallDir, (New-Object System.Text.UTF8Encoding($false)))
+# 保证内容非空并追加换行：空文件会让启动器里的 set /p 静默读不到（B23-③）
+$installDirText = if ($InstallDir) { $InstallDir } else { '(未设置)' }
+[System.IO.File]::WriteAllText((Join-Path $scriptDir 'install-dir.txt'), $installDirText + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
 
 # ---------- 渲染模板 ----------
 function Render([string]$name, [hashtable]$map) {
@@ -186,7 +206,7 @@ Step '已生成启动脚本'
 # 写入启动器版本（托盘「版本信息」面板显示用）
 $metaPath = Join-Path (Join-Path $scriptDir '..') '_meta.json'
 try {
-    $meta = Get-Content -LiteralPath $metaPath -Raw | ConvertFrom-Json
+    $meta = [System.IO.File]::ReadAllText($metaPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
     [System.IO.File]::WriteAllText((Join-Path $InstallDir 'launcher.version'), [string]$meta.version, (New-Object System.Text.UTF8Encoding($false)))
     Step "启动器版本：$($meta.version)"
 } catch {
@@ -199,16 +219,16 @@ if (-not $NoShortcut) {
         $sh = New-Object -ComObject WScript.Shell
         $desktop = [Environment]::GetFolderPath('Desktop')
         $lnk = $sh.CreateShortcut((Join-Path $desktop '启动DSH.lnk'))
-        # 直接指向隐藏 powershell 启动托盘，避免 .cmd 闪烁
-        $lnk.TargetPath = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-        $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $InstallDir 'DSH-tray.ps1')`" -OpenBrowser"
+        # 经 wscript + 启动DSH-托盘.vbs 零窗口启动托盘（.cmd 会闪控制台，powershell -WindowStyle Hidden 也可能闪一瞬）
+        $lnk.TargetPath = 'C:\Windows\System32\wscript.exe'
+        $lnk.Arguments = "`"$(Join-Path $InstallDir '启动DSH-托盘.vbs')`""
         $lnk.WorkingDirectory = $InstallDir
         $lnk.IconLocation = (Join-Path $InstallDir 'whale-white.ico')
         $lnk.Save()
         Step '已创建桌面快捷方式 启动DSH.lnk'
         # 附加：若装了 Edge，建 DSH应用.lnk 双击直接打开已安装的 PWA 主应用（聚焦不开多个）
         $edgePath = $null
-        foreach ($c in @((Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'), (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'))) {
+        foreach ($c in @((Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Microsoft\Edge\Application\msedge.exe'), (Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft\Edge\Application\msedge.exe'))) {
             if (Test-Path -LiteralPath $c) { $edgePath = $c; break }
         }
         if ($edgePath) {
@@ -236,9 +256,11 @@ Write-Host "  版本：$($v.Trim())"
 $patchEngine = Join-Path $scriptDir '补丁管理\补丁引擎-应用还原检查.ps1'
 if (Test-Path -LiteralPath $patchEngine) {
     Step '应用补丁（自动载入清单）...'
-    & $patchEngine -Manifest (Join-Path $scriptDir '补丁管理\自动载入清单-manifest.json')
-    # $LASTEXITCODE 陷阱：脚本调用不设该变量（全新进程为 $null）；仅显式非 0 退出码才算失败
-    if ($LASTEXITCODE) {
+    # 子进程调用：引擎内的 exit 只退出子进程，不会中止本脚本主流程（B1）
+    # 用 $PSHome 绝对路径，避免宿主进程 PATH 里找不到 powershell（B1 修复回归）
+    & (Join-Path $PSHome 'powershell.exe') -NoProfile -ExecutionPolicy Bypass -File $patchEngine -Manifest (Join-Path $scriptDir '补丁管理\自动载入清单-manifest.json')
+    # 失败仅黄色警告，不中止后续配套技能安装与完成提示
+    if ($LASTEXITCODE -ne 0) {
         Write-Host '补丁应用失败，请查看上方输出。' -ForegroundColor Yellow
     }
 } else {
@@ -259,12 +281,16 @@ if (Test-Path -LiteralPath $companionDir) {
         $need = -not (Test-Path -LiteralPath (Join-Path $dest 'SKILL.md'))
         if (-not $need) {
             # 已安装：比较 _meta 版本号（优先）与时间戳（同版本兜底），防旧包覆盖新版
+            $z = $null
             try {
                 $z = [System.IO.Compression.ZipFile]::OpenRead($zip)
-                $e = $z.Entries | Where-Object { $_.FullName -eq "$slug/_meta.json" }
+                # 条目名统一为正斜杠再比较：反斜杠条目的 zip 不再被静默跳过（B13-①）
+                $e = $z.Entries | Where-Object { ($_.FullName -replace '\\','/') -eq "$slug/_meta.json" }
                 $pkg = $null
-                if ($e) { $sr = New-Object System.IO.StreamReader($e.Open()); $pkg = $sr.ReadToEnd() | ConvertFrom-Json; $sr.Close() }
-                $z.Dispose()
+                if ($e) {
+                    $sr = New-Object System.IO.StreamReader($e.Open())
+                    try { $pkg = $sr.ReadToEnd() | ConvertFrom-Json } finally { $sr.Close() }
+                }
                 $inst = Get-Content -LiteralPath (Join-Path $dest '_meta.json') -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue
                 if ($pkg) {
                     if (-not $inst) { $need = $true }
@@ -289,12 +315,27 @@ if (Test-Path -LiteralPath $companionDir) {
                         else { $need = [long]$inst.publishedAt -lt [long]$pkg.publishedAt }  # 同版本比时间戳
                     }
                 }
-            } catch { $need = $false }
+            } catch { $need = $false } finally { if ($z) { $z.Dispose() } }
         }
         if (-not $need) { Write-Host "  已是最新：$slug"; return }
-        & 'C:\Windows\System32\tar.exe' -xf $zip -C $skillsRoot
-        if ($LASTEXITCODE -ne 0) { try { Expand-Archive -LiteralPath $zip -DestinationPath $skillsRoot -Force -ErrorAction Stop } catch {} }
-        if (Test-Path -LiteralPath (Join-Path $dest 'SKILL.md')) {
+        # 解压到临时目录 → 校验确实解出了新文件 → 再移动覆盖；
+        # 避免解压失败时目标目录旧残留被误报「已安装」（B13-②）
+        $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dsh-skill-{0}-{1}" -f $slug, [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
+        $installed = $false
+        try {
+            & 'C:\Windows\System32\tar.exe' -xf $zip -C $tmpRoot
+            if ($LASTEXITCODE -ne 0) { try { Expand-Archive -LiteralPath $zip -DestinationPath $tmpRoot -Force -ErrorAction Stop } catch {} }
+            $tmpSkill = Join-Path $tmpRoot $slug
+            if (Test-Path -LiteralPath (Join-Path $tmpSkill 'SKILL.md')) {
+                if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+                Move-Item -LiteralPath $tmpSkill -Destination $dest -Force
+                $installed = $true
+            }
+        } finally {
+            Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if ($installed) {
             Write-Host "  已安装：$slug" -ForegroundColor Green
         } else {
             Write-Host "  !! 安装失败：$slug" -ForegroundColor Yellow
