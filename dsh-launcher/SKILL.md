@@ -284,6 +284,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.73 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘右键菜单拆行为四行：第三行「DSH魔偶助手 <本地版本>」（3 秒内左键连点 5 次 → 打开 configure-git-credentials.ps1 配置 token）；第四行无 token 时「魔偶最新版本 <远程>（待更新/无需更新）」——待更新点击即拉取更新本地，无需更新点击做状态刷新（查询中…显示 ≥1s）；配置 token 后第四行变「魔偶Git版本 <远程>（单击双向同步）」——点击弹确认框，确定后双向同步；setup.ps1 部署 configure-git-credentials.ps1 到安装目录 |
 | dsh-launcher（一键启动本体） | 1.1.72 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘第三行文案改为「启动器版本 xx 版（有新版/无新版/无法检测）」；Get-GhLauncherVersion 带 token 检测（私有仓库也能检测版本，$ghToken 为空时匿名访问公开仓库）；dsh-sync 新增 Is-SyncIgnored 凭证类通配排除（config.json / credentials / .dsh / *.token 绝不进打包/上传，分发安全红线）；收编 configure-git-credentials.ps1 一键 token 配置脚本（转 UTF-8 BOM、分支修正为 feature/github-sync-v1.1.66）；环境要求-安装指南.md 新增「配置 GitHub token」章节 |
 | dsh-launcher（一键启动本体） | 1.1.71 | 0.1.0-rc.7、0.1.1-rc.2 | 环境清理匹配扩展 kimi-work（2026-08-30）：Start-DshServer 的 PATH 清理由 kimi-desktop|daimon 扩展为 kimi-desktop|daimon|kimi-work，覆盖 kimi 生态的 .kimi-work\bin 注入段，确保从任何宿主启动 DSH 时 web/GUI 环境均无 kimi 残留 |
 | dsh-launcher（一键启动本体） | 1.1.70 | 0.1.0-rc.7、0.1.1-rc.2 | 同步方向判定升级为「版本号优先、时间戳兜底」（2026-08-30，与配套技能一致）：auto 模式先比 _meta.json 的 version（新增 Compare-SyncVersion 语义比较，1.1.9 < 1.1.10），版本高者胜；版本相同再比 publishedAt；两者都相同才按内容修改时间分析并弹窗人工确认；配套 charset-pitfalls 升至 1.1.6（新增「AI 编辑工具编码坑·先检测后选路」章节） |

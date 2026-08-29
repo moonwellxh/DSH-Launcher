@@ -1,5 +1,6 @@
 {
-  "__MODE_HEADER_COMMENT__": "PATH 模式",
+    "__MODE_HEADER_COMMENT__": "PATH 模式",
+  "__MODE_SYNC_MODE__": "path",
   "__MODE_NODE_VARS__": "",
   "__MODE_GH_CONFIG__": "# ---- GitHub 同步（取代原 Z: 网络盘存档；Z 盘不再作为同步存档）----\n$ghRepo   = 'moonwellxh/DSH-Launcher'                       # GitHub 同步仓库（owner/repo）\n$ghBranch = 'feature/github-sync-v1.1.65'                   # 同步分支（须含 dsh-launcher/ 源树）\n$ghCache  = Join-Path $env:USERPROFILE '.dsh\\gh-sync\\DSH-Launcher'   # 仓库工作副本缓存",
   "__MODE_DSH_VERSION_BODY__": "function Get-CurrentDshVersion {\n    try {\n        $v = & dsh --version 2>&1\n        return (($v | Select-Object -First 1) -as [string]).Trim()\n    } catch { return '' }\n}",

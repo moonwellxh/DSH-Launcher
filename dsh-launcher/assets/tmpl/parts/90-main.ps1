@@ -122,8 +122,11 @@ $miLatest.Enabled = $false
 $miLatest.Text = '最新版本：查询中…'
 $menu.Items.Add($miLatest) | Out-Null
 $miLauncher = New-Object System.Windows.Forms.ToolStripMenuItem
-$miLauncher.Text = "启动器版本 $(Get-LauncherVersion) 版（检查中…）"
+$miLauncher.Text = "DSH魔偶助手 $(Get-LauncherVersion)"
 $menu.Items.Add($miLauncher) | Out-Null
+$miGit = New-Object System.Windows.Forms.ToolStripMenuItem
+$miGit.Text = '魔偶最新版本 查询中…'
+$menu.Items.Add($miGit) | Out-Null
 $menu.Items.Add('-') | Out-Null
 $miOpen  = $menu.Items.Add('打开 Web UI')
 $miTui   = $menu.Items.Add('终端界面 (TUI)')
@@ -150,6 +153,8 @@ $notify.ContextMenuStrip = $menu
 # 启动后延迟检查更新：刷新顶部三行版本信息
 $script:newerAvail = $false
 $script:latestVersion = $null
+$script:gitMode = $false
+$script:pendingUpdate = $false
 $verCheckTimer = New-Object System.Windows.Forms.Timer
 $verCheckTimer.Interval = 2500
 $verCheckTimer.Add_Tick({
@@ -172,15 +177,26 @@ $verCheckTimer.Add_Tick({
             $miLatest.Enabled = $false
             $miLatest.Text = '最新版本：查询失败'
         }
-        # 启动托盘行：显示本机启动器版本 + 与 GitHub 主分支对比后的可更新状态
+        # 第三行：DSH魔偶助手（本地启动器版本）；第四行：魔偶最新版本 / 魔偶Git版本（同步模式）
         $ghVer = Get-GhLauncherVersion -TimeoutSec 8
         $lv = Get-LauncherVersion
-        if ($ghVer -and (Test-NewerVersion $lv $ghVer)) {
-            $miLauncher.Text = "启动器版本 $lv 版（有新版）"
+        $miLauncher.Text = "DSH魔偶助手 $lv"
+        if ($ghToken) {
+            $script:gitMode = $true
+            $miGit.Text = "魔偶Git版本 $ghVer（单击双向同步）"
         } elseif ($ghVer) {
-            $miLauncher.Text = "启动器版本 $lv 版（无新版）"
+            $script:gitMode = $false
+            if (Test-NewerVersion $lv $ghVer) {
+                $script:pendingUpdate = $true
+                $miGit.Text = "魔偶最新版本 $ghVer（待更新）"
+            } else {
+                $script:pendingUpdate = $false
+                $miGit.Text = "魔偶最新版本 $ghVer（无需更新）"
+            }
         } else {
-            $miLauncher.Text = "启动器版本 $lv 版（无法检测）"
+            $script:gitMode = $false
+            $script:pendingUpdate = $false
+            $miGit.Text = '魔偶最新版本 无法检测'
         }
     } catch {}
 })
@@ -194,8 +210,58 @@ $miLatest.Add_Click({
         Show-UpgradeDialog 'DSH 升级' $instruction
     } catch { $notify.ShowBalloonTip(3000, 'DSH 升级', "准备失败：$($_.Exception.Message)", 'Error') }
 })
+# 第三行 5 连击 → 打开 token 配置；第四行：Git 模式（确认后双向同步）/ 待更新（更新本地）/ 无需更新（刷新 ≥1s）
+$script:launchClicks = New-Object System.Collections.ArrayList
 $miLauncher.Add_Click({
-    __MODE_SYNC_CALL__
+    try {
+        $now = Get-Date
+        [void]$script:launchClicks.Add($now)
+        while ($script:launchClicks.Count -gt 0 -and ($now - $script:launchClicks[0]).TotalSeconds -gt 3) { $script:launchClicks.RemoveAt(0) }
+        if ($script:launchClicks.Count -ge 5) {
+            $script:launchClicks.Clear()
+            $cfgScript = Join-Path $PSScriptRoot 'configure-git-credentials.ps1'
+            if (Test-Path -LiteralPath $cfgScript) {
+                $notify.ShowBalloonTip(2000, 'DSH', '打开 GitHub token 配置…', 'Info')
+                Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',$cfgScript -WindowStyle Normal
+            } else {
+                $notify.ShowBalloonTip(3000, 'DSH', "未找到 token 配置脚本：$cfgScript", 'Error')
+            }
+        }
+    } catch {}
+})
+$miGit.Add_Click({
+    try {
+        if ($script:gitMode) {
+            # 双向同步：确认后执行（非冲突场景）
+            $r = [System.Windows.Forms.MessageBox]::Show('确定执行双向同步吗？（将对比 GitHub 与本机启动器，按版本号/时间戳判定方向）', 'DSH 同步', [System.Windows.Forms.MessageBoxButtons]::OKCancel, [System.Windows.Forms.MessageBoxIcon]::Question)
+            if ($r -eq [System.Windows.Forms.DialogResult]::OK) {
+                __MODE_SYNC_CALL__
+            }
+        } elseif ($script:pendingUpdate) {
+            # 待更新：直接更新本地（拉取 GitHub 版本并应用）
+            $notify.ShowBalloonTip(2000, 'DSH', '正在从 GitHub 更新启动器…', 'Info')
+            $syncScript = Join-Path $PSScriptRoot 'dsh-sync.ps1'
+            if (Test-Path -LiteralPath $syncScript) {
+                Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$syncScript,'-Mode','__MODE_SYNC_MODE__','-InstallDir',$PSScriptRoot,'-Direction','pull' -WindowStyle Hidden
+            }
+        } else {
+            # 无需更新：状态刷新（查询中…，显示时间 ≥1s）
+            $miGit.Text = '魔偶最新版本 查询中…'
+            $miGit.Enabled = $false
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $ghVer2 = $null
+            try { $ghVer2 = Get-GhLauncherVersion -TimeoutSec 8 } catch {}
+            $sw.Stop()
+            $need = 1000 - $sw.ElapsedMilliseconds
+            if ($need -gt 0) { Start-Sleep -Milliseconds $need }
+            $lv2 = Get-LauncherVersion
+            $miGit.Enabled = $true
+            if ($ghVer2) {
+                if (Test-NewerVersion $lv2 $ghVer2) { $script:pendingUpdate = $true; $miGit.Text = "魔偶最新版本 $ghVer2（待更新）" }
+                else { $script:pendingUpdate = $false; $miGit.Text = "魔偶最新版本 $ghVer2（无需更新）" }
+            } else { $miGit.Text = '魔偶最新版本 无法检测' }
+        }
+    } catch {}
 })
 
 
