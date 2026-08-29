@@ -262,6 +262,9 @@ IsZoomed/双击 Open-Url）、setup.ps1 BOM 合规、内嵌配套版本与配套
    - bump `_meta.json` 的 `version` + `publishedAt`；
    - SKILL.md 兼容性表登记一行；
    - 点托盘第四行「双向同步」（或 CLI 跑 dsh-sync.ps1）上传。
+5. **同步完成后重启服务 + web 界面**（让新脚本 / 新版本号在运行中生效）：
+   - 托盘右键「重启 DSH」，或「退出并停止 DSH」后双击桌面「启动DSH」；
+   - 验证托盘版本号、菜单功能与最新版一致。
 
 **铁律**：setup（生成 + 检查）与同步（分发）是两个独立步骤，**绝不能跳过 setup/检查直接上传**
 （2026-08-30 教训：bump 后漏跑 setup 导致安装目录 `launcher.version` 滞后、托盘版本显示旧值）。
@@ -303,6 +306,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.77 | 0.1.0-rc.7、0.1.1-rc.2 | 「发布前检查清单」补第 5 步：同步完成后重启服务 + web 界面（让新脚本/版本号在运行中生效） |
 | dsh-launcher（一键启动本体） | 1.1.76 | 0.1.0-rc.7、0.1.1-rc.2 | 新增「发布前检查清单」章节：本地改动 → setup 生成 → 人工检查 → 确认 OK 才 bump + 同步（setup 与同步分离，禁止跳过检查直接上传） |
 | dsh-launcher（一键启动本体） | 1.1.75 | 0.1.0-rc.7、0.1.1-rc.2 | 第三行单击保持菜单打开（菜单级 ItemClicked 精确判断：点第三行不关闭菜单、便于连点 5 次，点其它项/别处照常关闭）；5 连击改为 wscript 启动 configure-git-credentials.vbs（Windows 原生 InputBox，无控制台闪现——powershell -WindowStyle Hidden 会隐藏 InputBox/Form 导致不弹窗，改用 GUI 型 wscript 彻底规避；vbs：InputBox 输入 token → ADODB.Stream 写 UTF-8 config.json → MsgBox 提示）；旧 configure-git-credentials.ps1 移除 |
 | dsh-launcher（一键启动本体） | 1.1.74 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘第三行「DSH魔偶助手」加粗（与第一行同款 Microsoft YaHei UI 9pt Bold） |
