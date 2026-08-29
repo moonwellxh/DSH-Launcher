@@ -179,6 +179,7 @@ Copy-Item  (Join-Path $scriptDir '启动DSH-托盘.vbs')  (Join-Path $InstallDir
 Copy-Item  (Join-Path $scriptDir 'run-hidden.vbs')    (Join-Path $InstallDir 'run-hidden.vbs')    -Force
 Copy-Item  (Join-Path $scriptDir 'tray.ico')          (Join-Path $InstallDir 'tray.ico')          -Force
 Copy-Item  (Join-Path $scriptDir 'whale.ico')          (Join-Path $InstallDir 'whale.ico')          -Force
+Copy-Item  (Join-Path $scriptDir 'dsh-sync.ps1')      (Join-Path $InstallDir 'dsh-sync.ps1')      -Force
 Copy-Item  (Join-Path $scriptDir 'whale-white.png')         (Join-Path $InstallDir 'whale-white.png')         -Force
 Copy-Item  (Join-Path $scriptDir 'whale-white.ico')         (Join-Path $InstallDir 'whale-white.ico')         -Force
 Step '已生成启动脚本'

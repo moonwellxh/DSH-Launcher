@@ -27,3 +27,41 @@ function Invoke-DshRpc {
     if (-not $obj.result.ok) { throw "RPC ${Method} 失败: $($obj.result.error.message)" }
     return $obj.result.value
 }
+
+function Get-SystemProxy {
+    # 读系统代理（HKCU Internet Settings）；返回 http://host:port 或空串
+    try {
+        $is = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop
+        if ($is.ProxyEnable -and $is.ProxyServer) {
+            $ps = [string]$is.ProxyServer
+            if ($ps -match '(^|;)(?:http=)?(https?://[^;]+)') { return $Matches[2] }
+            if ($ps -notmatch '^https?://') { return 'http://' + $ps }
+            return $ps
+        }
+    } catch {}
+    return ''
+}
+
+function Invoke-DshHttp {
+    # 统一 HTTP 请求：直连优先，失败则回退系统代理，最后回退 Invoke-RestMethod
+    param([string]$Uri, [int]$TimeoutSec = 15)
+    try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12 } catch {}
+    try {
+        $wc = New-Object System.Net.WebClient
+        $wc.Proxy = $null
+        $wc.Encoding = [System.Text.Encoding]::UTF8
+        $wc.Headers.Add('User-Agent', 'DSH-tray')
+        return $wc.DownloadString($Uri)
+    } catch {}
+    $sysProxy = Get-SystemProxy
+    if ($sysProxy) {
+        try {
+            $wc = New-Object System.Net.WebClient
+            $wc.Proxy = New-Object System.Net.WebProxy($sysProxy)
+            $wc.Encoding = [System.Text.Encoding]::UTF8
+            $wc.Headers.Add('User-Agent', 'DSH-tray')
+            return $wc.DownloadString($Uri)
+        } catch {}
+    }
+    return Invoke-RestMethod -Uri $Uri -TimeoutSec $TimeoutSec
+}

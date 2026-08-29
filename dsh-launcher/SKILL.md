@@ -232,7 +232,7 @@ AI 直接往 `D:\DSHS\DSH-tray.ps1`（正在运行的生成物）注入诊断代
 双击快捷方式也启动不了」差点全盘瘫痪。恢复靠 Z 盘已知良包覆盖 + 就地安装。
 
 **正确流程（必须遵守）**：
-1. **只改模板**（`assets\tmpl\DSH-tray.ps1.tmpl` / `DSH-tray.ps1.path.tmpl`），不改生成物；
+1. **只改模板片段**（`assets\tmpl\parts\*.ps1` / `mode-*.json`），不改生成物；setup.ps1 会按模式拼装生成最终托盘脚本；
 2. 用 setup.ps1 或按渲染逻辑**重新生成** DSH-tray.ps1；
 3. 重新生成后**先做语法验证**（`[scriptblock]::Create((Get-Content -Raw))`）再重启托盘；
 4. 重启托盘前**先备份当前良版生成物**（如复制 DSH-tray.ps1.bak）；

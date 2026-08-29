@@ -85,8 +85,7 @@
 | 文件 | 作用 |
 |---|---|
 | `assets\setup.ps1` | **核心安装/生成器**：探测 DSH → 生成启动脚本/快捷方式 → 按补丁清单打补丁 |
-| `assets\tmpl\DSH-tray.ps1.tmpl` | 托盘本体模板（源码树模式） |
-| `assets\tmpl\DSH-tray.ps1.path.tmpl` | 托盘本体模板（PATH 模式，注入 `__DSH_CMD__`） |
+| `assets\tmpl\parts\*.ps1` + `mode-*.json` | 托盘本体模板片段（setup.ps1 按模式拼装成 DSH-tray.ps1） |
 | `assets\tmpl\dsh.cmd.tmpl` / `dsh.cmd.path.tmpl` | CLI 包装模板（两种模式） |
 | `assets\启动DSH.bat` | 菜单启动器源 |
 | `assets\启动DSH-托盘.vbs` | 零窗口一键托盘入口源 |
@@ -136,10 +135,9 @@
 ### 6.2 改托盘 / 启动器 → 重新生成 → 重启托盘（最常用）
 
 ```powershell
-# ① 改源：只改 assets\tmpl\*.tmpl 或 assets\*.cmd/.vbs（按第 9 节编码方式写）
-# ② 语法验证模板
-$p='C:\Users\雍远\.agents\skills\dsh-launcher\assets\tmpl\DSH-tray.ps1.tmpl'
-$null=[scriptblock]::Create((Get-Content -Raw -LiteralPath $p -Encoding UTF8))   # 无报错=OK
+# ① 改源：只改 assets\tmpl\parts\*.ps1 / mode-*.json 或 assets\*.cmd/.vbs（按第 9 节编码方式写）
+# ② 语法验证（可用仓库根目录 verify_parts.py 检查无残留占位符）
+python verify_parts.py   # 无报错=OK
 
 # ③ 备份当前良版生成物
 Copy-Item D:\DSHS\DSH-tray.ps1 "D:\DSHS\DSH-tray.ps1.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"

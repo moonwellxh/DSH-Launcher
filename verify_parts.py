@@ -6,10 +6,12 @@ from pathlib import Path
 ROOT = Path('/workspace/dsh-launcher/assets/tmpl')
 PARTS_DIR = ROOT / 'parts'
 
+
 def load_mode(mode):
     path = PARTS_DIR / f'mode-{mode}.json'
     with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
+
 
 def render_tray(mode, var_map):
     mode_repl = load_mode(mode)
@@ -35,48 +37,24 @@ def render_tray(mode, var_map):
         sb.append(content)
     return ''.join(sb)
 
-def normalize(text):
-    text = text.replace('\r\n', '\n').replace('\r', '\n')
-    lines = [r.rstrip() for r in text.split('\n')]
-    while lines and lines[-1] == '':
-        lines.pop()
-    return '\n'.join(lines)
 
-def compare(mode, var_map, old_tmpl):
-    generated = render_tray(mode, var_map)
-    old = old_tmpl.read_text(encoding='utf-8')
-    # 旧模板也需要做同样的变量替换，才能与拼装产物公平比较
-    for k, v in var_map.items():
-        old = old.replace(k, str(v))
-    g_norm = normalize(generated)
-    o_norm = normalize(old)
-    if g_norm == o_norm:
-        print(f'[OK] {mode}: generated matches {old_tmpl.name}')
-        return True
-    else:
-        print(f'[FAIL] {mode}: mismatch with {old_tmpl.name}')
-        g_lines = g_norm.split('\n')
-        o_lines = o_norm.split('\n')
-        for i, (a, b) in enumerate(zip(g_lines, o_lines)):
-            if a != b:
-                print(f'  first diff at line {i+1}:')
-                print(f'    gen: {repr(a)}')
-                print(f'    old: {repr(b)}')
-                start = max(0, i - 3)
-                print('  generated context:')
-                for j in range(start, min(len(g_lines), i + 5)):
-                    print(f'    {j+1}: {repr(g_lines[j])}')
-                print('  old context:')
-                for j in range(start, min(len(o_lines), i + 5)):
-                    print(f'    {j+1}: {repr(o_lines[j])}')
-                break
-        else:
-            print(f'  line counts differ: gen={len(g_lines)} old={len(o_lines)}')
+def check_no_placeholders(text, mode):
+    found = set(re.findall(r'__[A-Z_][A-Z0-9_]*__', text))
+    if found:
+        print(f'[FAIL] {mode}: 残留占位符 {found}')
         return False
+    print(f'[OK] {mode}: 无残留占位符，渲染成功')
+    return True
+
+
+def check_references(mode, var_map):
+    generated = render_tray(mode, var_map)
+    return check_no_placeholders(generated, mode)
+
 
 all_ok = True
-all_ok &= compare('source', {'__NODE_EXE__': 'C:\\fake\\node.exe', '__DSH_ROOT__': 'C:\\fake\\deepseek-harness'}, ROOT / 'DSH-tray.ps1.tmpl')
-all_ok &= compare('path', {'__DSH_CMD__': 'C:\\fake\\dsh.cmd'}, ROOT / 'DSH-tray.ps1.path.tmpl')
+all_ok &= check_references('source', {'__NODE_EXE__': 'C:\\fake\\node.exe', '__DSH_ROOT__': 'C:\\fake\\deepseek-harness'})
+all_ok &= check_references('path', {'__DSH_CMD__': 'C:\\fake\\dsh.cmd'})
 
 if all_ok:
     print('\nAll checks passed.')

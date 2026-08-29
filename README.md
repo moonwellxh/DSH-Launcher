@@ -39,7 +39,7 @@ DSH-Launcher/
 │   ├── 就地安装.bat                 ← 绿色安装：注册技能 + 就地生成启动器
 │   └── assets/
 │       ├── setup.ps1                ← 核心安装/生成器（探测 DSH → 生成脚本 → 按清单打补丁）
-│       ├── tmpl/                    ← 托盘与 CLI 包装模板（DSH-tray.ps1.tmpl / dsh.cmd.tmpl …）
+│       ├── tmpl/                    ← 托盘与 CLI 包装模板（parts/ 片段 + mode-*.json + setup.ps1 拼装生成）
 │       ├── 启动DSH.bat / 启动DSH-托盘.cmd / 启动DSH-托盘.vbs / run-hidden.vbs / 更新安装.cmd
 │       ├── 配套技能/                ← 内嵌 4 个配套技能 zip（setup.ps1 自动安装）
 │       ├── 补丁管理/                ← 补丁引擎 + 自动载入清单 + 补丁01-档案柜v1
