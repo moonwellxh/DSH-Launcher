@@ -246,6 +246,25 @@ AI 直接往 `D:\DSHS\DSH-tray.ps1`（正在运行的生成物）注入诊断代
 **判断良包标准**：归档包（`releases\<版本>\` 内的 zip）`testzip()` 无损坏、模板含完整功能（Open-DshApp/pwaGuideShown/
 IsZoomed/双击 Open-Url）、setup.ps1 BOM 合规、内嵌配套版本与配套目录一致。
 
+## 发布前检查清单（本地改动 → 上传，用户规定 2026-08-30）
+
+任何对技能（模板 / assets 脚本 / 文档 / 版本号）的改动，**上传 GitHub 之前**严格按此顺序，缺一不可：
+
+1. **改动**：只改模板片段 / assets 脚本 / 文档（遵守「调试纪律」：只改模板，不直接改运行中的生成物）。
+2. **跑 setup.ps1 生成**（干净 PATH 下）：
+   `powershell -NoProfile -ExecutionPolicy Bypass -File "<技能>\assets\setup.ps1" -InstallDir <安装目录>`
+   它会重新生成安装目录脚本，并更新 `launcher.version`。
+3. **实际检查（人工确认）**：
+   - 安装目录生成物确实含新改动（`DSH-tray.ps1` / `dsh-sync.ps1` / `launcher.version`）；
+   - 语法解析 OK（`[scriptblock]::Create`）；
+   - 重启托盘，右键菜单 / 功能实际验证 OK。
+4. **确认 OK 后才 bump + 同步**：
+   - bump `_meta.json` 的 `version` + `publishedAt`；
+   - SKILL.md 兼容性表登记一行；
+   - 点托盘第四行「双向同步」（或 CLI 跑 dsh-sync.ps1）上传。
+
+**铁律**：setup（生成 + 检查）与同步（分发）是两个独立步骤，**绝不能跳过 setup/检查直接上传**
+（2026-08-30 教训：bump 后漏跑 setup 导致安装目录 `launcher.version` 滞后、托盘版本显示旧值）。
 ## 已装机器如何升级
 
 **更新后的必做步骤（不重跑 = 补丁未打、安装不完整）：**
@@ -284,6 +303,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.76 | 0.1.0-rc.7、0.1.1-rc.2 | 新增「发布前检查清单」章节：本地改动 → setup 生成 → 人工检查 → 确认 OK 才 bump + 同步（setup 与同步分离，禁止跳过检查直接上传） |
 | dsh-launcher（一键启动本体） | 1.1.75 | 0.1.0-rc.7、0.1.1-rc.2 | 第三行单击保持菜单打开（菜单级 ItemClicked 精确判断：点第三行不关闭菜单、便于连点 5 次，点其它项/别处照常关闭）；5 连击改为 wscript 启动 configure-git-credentials.vbs（Windows 原生 InputBox，无控制台闪现——powershell -WindowStyle Hidden 会隐藏 InputBox/Form 导致不弹窗，改用 GUI 型 wscript 彻底规避；vbs：InputBox 输入 token → ADODB.Stream 写 UTF-8 config.json → MsgBox 提示）；旧 configure-git-credentials.ps1 移除 |
 | dsh-launcher（一键启动本体） | 1.1.74 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘第三行「DSH魔偶助手」加粗（与第一行同款 Microsoft YaHei UI 9pt Bold） |
 | dsh-launcher（一键启动本体） | 1.1.73 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘右键菜单拆行为四行：第三行「DSH魔偶助手 <本地版本>」（3 秒内左键连点 5 次 → 打开 configure-git-credentials.ps1 配置 token）；第四行无 token 时「魔偶最新版本 <远程>（待更新/无需更新）」——待更新点击即拉取更新本地，无需更新点击做状态刷新（查询中…显示 ≥1s）；配置 token 后第四行变「魔偶Git版本 <远程>（单击双向同步）」——点击弹确认框，确定后双向同步；setup.ps1 部署 configure-git-credentials.ps1 到安装目录 |
