@@ -7,7 +7,7 @@ param(
     [string]$SkillDir = '',
     [string]$InstallDir = '',
     [string]$GhRepo = 'moonwellxh/DSH-Launcher',
-    [string]$GhBranch = 'main',
+    [string]$GhBranch = 'feature/github-sync-v1.1.65',
     [string]$GhToken = '',
     [ValidateSet('auto', 'upload', 'pull')][string]$Direction = 'auto',
     [switch]$NoRestart,
@@ -15,6 +15,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# ---------- 清理宿主 agent（kimi daimon）注入的 git 配置变量，防 git 报 missing config key（2026-08-30） ----------
+Get-ChildItem Env: | Where-Object { $_.Name -like 'GIT_CONFIG_*' } | Remove-Item -ErrorAction SilentlyContinue
 
 # ---------- 配置优先级：环境变量 > ~/.dsh/gh-sync/config.json > 默认值 ----------
 $ghSyncConfigPath = Join-Path $env:USERPROFILE '.dsh\gh-sync\config.json'
@@ -71,6 +74,15 @@ function Get-SyncAuthArgs {
     }
     return @()
 }
+function Compare-SyncVersion {
+    # Semantic version compare: 1(a>b) / -1(a<b) / 0 (fallback to string compare if unparseable)
+    param([string]$A, [string]$B)
+    $av = $null; $bv = $null
+    [void][version]::TryParse($A, [ref]$av)
+    [void][version]::TryParse($B, [ref]$bv)
+    if ($av -and $bv) { return [Math]::Sign($av.CompareTo($bv)) }
+    return [string]::Compare($A, $B, [System.StringComparison]::OrdinalIgnoreCase)
+}
 function Test-GitErrorIsAuth {
     param([string]$Text)
     return [bool]($Text -match 'could not read Username|terminal prompts disabled|Authentication failed|Invalid username|Bad credentials|Repository not found|fatal: repository|401|403')
@@ -121,14 +133,24 @@ function Format-SyncError {
     if ($tail) { $msg += "`n`n--- git 输出（末 8 行）---`n$tail" }
     return $msg
 }
-function Get-SyncIgnoreSet {
-    return @{ 'assets/install-dir.txt' = $true; 'install-dir.txt' = $true }
+function Is-SyncIgnored {
+    # 分发安全红线（2026-08-30）：机器特定文件与一切凭证类文件一律不进打包/上传/下载——
+    # 即使误把 config.json / credentials / .dsh / *.token 放进技能目录，也会被这里拦下，绝不外泄。
+    param([string]$Rel)
+    if ($Rel -in @('install-dir.txt', 'assets/install-dir.txt')) { return $true }
+    if ($Rel -match '(^|/)(config\.json|credentials[^/]*|\.dsh[^/]*|[^/]*\.token[^/]*)$') { return $true }
+    return $false
 }
 function Get-SyncFileHash {
     param([string]$Path)
     $bytes = [System.IO.File]::ReadAllBytes($Path)
-    if ($bytes -contains 0) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash }
-    $norm = [System.Text.Encoding]::UTF8.GetBytes(([System.Text.Encoding]::UTF8.GetString($bytes) -replace "`r`n", "`n"))
+    # .bat/.cmd 是 GBK 编码的脚本：直接按原始字节哈希，不做文本归一化（配合仓库 .gitattributes 固定换行）
+    $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    if ($bytes -contains 0 -or $ext -in @('.bat', '.cmd')) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash }
+    # 其余文本文件：先严格 UTF-8 解码（失败则回退 GBK/936），归一化 CRLF→LF 后按 UTF-8 字节哈希
+    try { $text = [System.Text.UTF8Encoding]::new($false, $true).GetString($bytes) }
+    catch { $text = [System.Text.Encoding]::GetEncoding(936).GetString($bytes) }
+    $norm = [System.Text.Encoding]::UTF8.GetBytes(($text -replace "`r`n", "`n"))
     $ms = New-Object System.IO.MemoryStream(, $norm)
     try { return (Get-FileHash -InputStream $ms -Algorithm SHA256).Hash } finally { $ms.Dispose() }
 }
@@ -174,7 +196,7 @@ function Publish-SkillZip {
     try {
         Get-ChildItem -LiteralPath $SkillDir -Recurse -File | ForEach-Object {
             $rel = $_.FullName.Substring($SkillDir.Length).TrimStart('\') -replace '\\','/'
-            if ($rel -in @('install-dir.txt', 'assets/install-dir.txt')) { return }
+            if (Is-SyncIgnored $rel) { return }
             $entry = $zip.CreateEntry(($RootName + '/' + $rel), [System.IO.Compression.CompressionLevel]::Optimal)
             $es = $entry.Open()
             try { $bytes = [System.IO.File]::ReadAllBytes($_.FullName); $es.Write($bytes, 0, $bytes.Length) } finally { $es.Close() }
@@ -265,6 +287,7 @@ function Restart-DshTray([string]$TrayPath) {
     @"
 Start-Sleep -Seconds 2
 Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','$TrayPath' -WindowStyle Hidden
+Remove-Item -LiteralPath `$MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 "@ | Set-Content -LiteralPath $helper -Encoding UTF8
     Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$helper) -WindowStyle Hidden
     return $true
@@ -274,25 +297,42 @@ Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass',
 function Sync-LauncherScript {
     Write-SyncStatus 'info' '正在同步启动脚本…'
     if (-not (Get-SyncLock)) { throw '同步正在进行中，请稍后再试。' }
-    $tmpZip = $null
     try {
         if (-not (Test-Path -LiteralPath $SkillDir)) { throw "本机技能目录不存在：$SkillDir" }
+        # 兜底探测：宿主注入环境可能精简了 PATH，找不到 git 时探测常见安装位置并补入 PATH（2026-08-30）
+        if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+            $gitDirs = @(
+                'C:\Program Files\Git\cmd',
+                "$env:ProgramFiles\Git\cmd",
+                (Join-Path $env:LOCALAPPDATA 'Programs\MinGit\cmd'),
+                (Join-Path $env:LOCALAPPDATA 'Programs\Git\cmd')
+            )
+            $ghApp = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'GitHubDesktop') -Directory -Filter 'app-*' -ErrorAction SilentlyContinue |
+                     Sort-Object Name -Descending | Select-Object -First 1
+            if ($ghApp) { $gitDirs += (Join-Path $ghApp.FullName 'resources\app\git\cmd') }
+            foreach ($d in $gitDirs) {
+                if ($d -and (Test-Path -LiteralPath (Join-Path $d 'git.exe'))) {
+                    $env:Path = $d + ';' + $env:Path
+                    break
+                }
+            }
+        }
         if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw '未找到 git：请先安装 Git（https://git-scm.com）；读取公开仓库无需凭据，写入需配置 token。' }
         Repair-SyncCache $ghCache $GhBranch
         $remoteBase = Join-Path $ghCache 'dsh-launcher'
         if (-not (Test-SyncRemoteTree $remoteBase)) { throw "GitHub 仓库结构异常：分支 `"$GhBranch`" 缺少 dsh-launcher/ 源树（SKILL.md/_meta.json）。请检查 branch 是否指向含源树的分支。" }
 
-        $ignore = Get-SyncIgnoreSet
+
         $localMap = @{}
         Get-ChildItem -LiteralPath $SkillDir -Recurse -File | ForEach-Object {
             $rel = ($_.FullName.Substring($SkillDir.Length + 1) -replace '\\','/')
-            if ($ignore.ContainsKey($rel)) { return }
+            if (Is-SyncIgnored $rel) { return }
             $localMap[$rel] = Get-SyncFileHash $_.FullName
         }
         $remoteMap = @{}
         Get-ChildItem -LiteralPath $remoteBase -Recurse -File | ForEach-Object {
             $rel = ($_.FullName.Substring($remoteBase.Length + 1) -replace '\\','/')
-            if ($ignore.ContainsKey($rel)) { return }
+            if (Is-SyncIgnored $rel) { return }
             $remoteMap[$rel] = Get-SyncFileHash $_.FullName
         }
         $diff = @()
@@ -308,7 +348,13 @@ function Sync-LauncherScript {
         $rm = Get-Content -LiteralPath (Join-Path $remoteBase '_meta.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $lp = [long]$lm.publishedAt; $rp = [long]$rm.publishedAt
         $chosenDirection = $Direction
-        if ($lp -eq $rp -and $Direction -eq 'auto') {
+        # Direction: version-first, timestamp-fallback (2026-08-30, same rule as companion skills)
+        if ($Direction -eq 'auto') {
+            $vc = Compare-SyncVersion ([string]$lm.version) ([string]$rm.version)
+            if ($vc -gt 0) { $chosenDirection = 'upload' }
+            elseif ($vc -lt 0) { $chosenDirection = 'pull' }
+            elseif ($lp -ne $rp) { $chosenDirection = if ($lp -gt $rp) { 'upload' } else { 'pull' } }
+            else {
             $localNewer = $false; $remoteNewer = $false
             foreach ($k in $diff) {
                 $rf = Join-Path $remoteBase ($k -replace '/','\')
@@ -317,7 +363,7 @@ function Sync-LauncherScript {
                     $cl = (Invoke-SyncGit @('log', '-1', '--format=%ct', '--', $k) $ghCache).text
                     if ($cl -match '\d+') {
                         $ct = [long]$Matches[0]
-                        if ($ct -gt 0) { $rt = [datetimeoffset]::FromUnixTimeSeconds($ct).LocalDateTime }
+                        if ($ct -gt 0) { $rt = [datetimeoffset]::FromUnixTimeSeconds($ct).UtcDateTime }
                     }
                 }
                 $lf = Join-Path $SkillDir ($k -replace '/','\')
@@ -344,9 +390,10 @@ function Sync-LauncherScript {
                 Write-SyncStatus 'result' '已取消同步，未做任何更改。' @{ action = 'cancelled' }
                 return
             }
+            }
         }
 
-        if ($rp -gt $lp -or $chosenDirection -eq 'pull') {
+        if ($chosenDirection -eq 'pull') {
             $curDsh = Get-CurrentDshVersion
             if ($rm.compatibleDsh) {
                 $compat = @($rm.compatibleDsh)
@@ -357,17 +404,21 @@ function Sync-LauncherScript {
             }
             Get-ChildItem -LiteralPath $remoteBase -Recurse -File | ForEach-Object {
                 $rel = $_.FullName.Substring($remoteBase.Length + 1) -replace '\\','/'
-                if ($ignore.ContainsKey($rel)) { return }
+                if (Is-SyncIgnored $rel) { return }
                 $dst = Join-Path $SkillDir ($rel -replace '/','\')
                 New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
                 Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
             }
             Get-ChildItem -LiteralPath $SkillDir -Recurse -File | ForEach-Object {
                 $rel = ($_.FullName.Substring($SkillDir.Length + 1) -replace '\\','/')
-                if ($ignore.ContainsKey($rel)) { return }
+                if (Is-SyncIgnored $rel) { return }
                 if (-not $remoteMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
             }
-            & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $SkillDir 'assets\setup.ps1') -InstallDir $InstallDir -NoShortcut 2>&1 | Out-Null
+            $setupOut = (& (Join-Path $PSHome 'powershell.exe') -NoProfile -ExecutionPolicy Bypass -File (Join-Path $SkillDir 'assets\setup.ps1') -InstallDir $InstallDir -NoShortcut 2>&1 | ForEach-Object { "$_" }) -join "`n"
+            if ($LASTEXITCODE -ne 0) {
+                Write-SyncStatus 'error' "已从 GitHub 拉取启动脚本（$($rm.version)），但更新后重装失败（setup.ps1 退出码 $LASTEXITCODE），启动器可能未刷新、补丁可能未打。`n--- setup.ps1 输出 ---`n$setupOut"
+                return
+            }
             if (-not $NoRestart) {
                 $newTray = Join-Path $InstallDir 'DSH-tray.ps1'
                 if (Restart-DshTray $newTray) {
@@ -379,18 +430,18 @@ function Sync-LauncherScript {
                 }
             }
             Write-SyncStatus 'result' "已从 GitHub 更新启动脚本（$($rm.version)）。" @{ action = 'pulled'; version = [string]$rm.version }
-        } elseif ($lp -gt $rp -or $chosenDirection -eq 'upload') {
+        } elseif ($chosenDirection -eq 'upload' -or ($Direction -eq 'auto' -and $lp -gt $rp)) {
             $srcTree = Join-Path $ghCache 'dsh-launcher'
             Get-ChildItem -LiteralPath $SkillDir -Recurse -File | ForEach-Object {
                 $rel = ($_.FullName.Substring($SkillDir.Length + 1) -replace '\\','/')
-                if ($ignore.ContainsKey($rel)) { return }
+                if (Is-SyncIgnored $rel) { return }
                 $dst = Join-Path $srcTree ($rel -replace '/','\')
                 New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
                 Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
             }
             Get-ChildItem -LiteralPath $srcTree -Recurse -File | ForEach-Object {
                 $rel = ($_.FullName.Substring($srcTree.Length + 1) -replace '\\','/')
-                if ($ignore.ContainsKey($rel)) { return }
+                if (Is-SyncIgnored $rel) { return }
                 if (-not $localMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
             }
             $releaseDir = Join-Path $ghCache ("releases\v" + $lm.version)
@@ -429,7 +480,6 @@ function Sync-LauncherScript {
         Write-SyncStatus 'error' "同步失败：$($_.Exception.Message)"
     } finally {
         Release-SyncLock
-        if ($tmpZip) { Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue }
     }
 }
 

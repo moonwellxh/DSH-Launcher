@@ -42,12 +42,29 @@ function Get-SystemProxy {
     return ''
 }
 
+# 带超时的 WebClient 子类（WebClient 本身无 Timeout 属性，重写 GetWebRequest 注入请求超时）
+if (-not ('DshTimeoutWebClient' -as [type])) {
+    Add-Type @"
+using System;
+using System.Net;
+public class DshTimeoutWebClient : WebClient {
+    public int TimeoutMs = 15000;
+    protected override WebRequest GetWebRequest(Uri address) {
+        WebRequest req = base.GetWebRequest(address);
+        req.Timeout = TimeoutMs;
+        return req;
+    }
+}
+"@
+}
+
 function Invoke-DshHttp {
     # 统一 HTTP 请求：直连优先，失败则回退系统代理，最后回退 Invoke-RestMethod
     param([string]$Uri, [int]$TimeoutSec = 15)
     try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12 } catch {}
     try {
-        $wc = New-Object System.Net.WebClient
+        $wc = New-Object DshTimeoutWebClient
+        $wc.TimeoutMs = $TimeoutSec * 1000
         $wc.Proxy = $null
         $wc.Encoding = [System.Text.Encoding]::UTF8
         $wc.Headers.Add('User-Agent', 'DSH-tray')
@@ -56,7 +73,8 @@ function Invoke-DshHttp {
     $sysProxy = Get-SystemProxy
     if ($sysProxy) {
         try {
-            $wc = New-Object System.Net.WebClient
+            $wc = New-Object DshTimeoutWebClient
+            $wc.TimeoutMs = $TimeoutSec * 1000
             $wc.Proxy = New-Object System.Net.WebProxy($sysProxy)
             $wc.Encoding = [System.Text.Encoding]::UTF8
             $wc.Headers.Add('User-Agent', 'DSH-tray')

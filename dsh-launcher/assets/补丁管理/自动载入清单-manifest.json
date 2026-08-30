@@ -12,7 +12,7 @@
                         "requiresRestart":  true,
                         "install":  "安装脚本-档案柜v1.ps1",
                         "restore":  "还原脚本-档案柜v1.ps1",
-                        "compatibleDsh":  "0.1.1-rc.2"
+                        "compatibleDsh":  ["0.1.1-rc.2"]
                     }
                 ]
 }

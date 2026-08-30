@@ -130,7 +130,7 @@ function Show-UpgradeDialog {
             Invoke-DshRpc 'session.selectModel' $sm | Out-Null
             Invoke-DshRpc 'session.prompt' @{ sessionId = $sid; mode = 'queue'; content = @(@{ type = 'text'; text = $promptText }) } | Out-Null
             $form.Close()
-            Start-Process $webUrl
+            Open-Url $webUrl
             $notify.ShowBalloonTip(3000, 'DSH 升级', '升级任务已提交运行。', 'Info')
         } catch {
             [System.Windows.Forms.MessageBox]::Show("提交失败：$($_.Exception.Message)", $Title, 'OK', 'Error')
@@ -170,6 +170,6 @@ __MODE_UPGRADE_INSTRUCTION____MODE_UPGRADE_SUFFIX__function Show-SyncDirectionDi
     $f.Controls.Add($bPull)
     $f.Controls.Add($bCancel)
     [void]$f.ShowDialog()
+    $f.Dispose()
     return $script:dialogResult
 }
-__MODE_SYNC_IMPL__

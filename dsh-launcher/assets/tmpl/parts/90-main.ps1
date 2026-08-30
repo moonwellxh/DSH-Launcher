@@ -23,7 +23,7 @@ Add-Type -AssemblyName System.Drawing
 $mutex = New-Object System.Threading.Mutex($false, 'Local\DSH-Tray-3080')
 if (-not $mutex.WaitOne(0, $false)) {
     # 残留托盘（旧代码/图标丢失的僵尸）占着互斥锁：结束它们后接管，保证双击必定出新托盘
-    Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match '-File\s+.*DSH-tray\.ps1' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match '-File\s+.*DSH-tray\.ps1' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 800
     $mutex = New-Object System.Threading.Mutex($false, 'Local\DSH-Tray-3080')
     $owned = $false
@@ -87,6 +87,10 @@ $webTimer.Add_Tick({
                 $script:proc = Start-DshServer
                 if ($null -eq $script:proc) {
                     $notify.ShowBalloonTip(4000, 'DSH', '__MODE_WEB_WATCHDOG_FAIL__', 'Error')
+                } else {
+                    # 看护重启成功：重置自动开浏览器标记；就绪 Timer 若已停止（如旧逻辑在进程退出时 Stop）则重新启动
+                    $script:browserOpened = $false
+                    if ($null -ne $readyTimer -and -not $readyTimer.Enabled) { $readyTimer.Start() }
                 }
             }
         } else {
@@ -108,7 +112,22 @@ $webTimer.Start()
 
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-# 顶部分隔线上方三行：DSH 现有版本（加粗）/ 最新版本（可更新可点）/ 启动托盘版本（可更新/已是最新）
+# 第三行需要连点 5 次：点击该行时阻止菜单自动关闭（标志位 + ItemClicked 时取消关闭），点其它项/别处照常关闭
+$script:keepLauncherOpen = $false
+# 用菜单级 ItemClicked 精确判断：点第三行 → 保持菜单打开（便于连点 5 次）；点其它项/别处 → 照常关闭
+$menu.Add_ItemClicked({
+    param($s, $e)
+    if ($null -ne $e.ClickedItem -and $e.ClickedItem -eq $miLauncher) { $script:keepLauncherOpen = $true }
+    else { $script:keepLauncherOpen = $false }
+})
+$menu.Add_Closing({
+    param($s, $e)
+    if ($script:keepLauncherOpen -and $e.CloseReason -eq [System.Windows.Forms.ToolStripDropDownCloseReason]::ItemClicked) {
+        $e.Cancel = $true
+        $script:keepLauncherOpen = $false
+    }
+})
+# 顶部分隔线上方三行：DSH 现有版本（加粗）/ 最新版本（可更新可点）/ 启动器版本（有新版/无新版/无法检测）
 $miCur = New-Object System.Windows.Forms.ToolStripMenuItem
 $miCur.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
 $miCur.Text = "DSH 版本 $(Get-CurrentDshVersion)"
@@ -118,15 +137,19 @@ $miLatest.Enabled = $false
 $miLatest.Text = '最新版本：查询中…'
 $menu.Items.Add($miLatest) | Out-Null
 $miLauncher = New-Object System.Windows.Forms.ToolStripMenuItem
-$miLauncher.Text = "启动托盘 $(Get-LauncherVersion) 版（检查中…）"
+$miLauncher.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
+$miLauncher.Text = "DSH魔偶助手 $(Get-LauncherVersion)"
 $menu.Items.Add($miLauncher) | Out-Null
+$miGit = New-Object System.Windows.Forms.ToolStripMenuItem
+$miGit.Text = '魔偶最新版本 查询中…'
+$menu.Items.Add($miGit) | Out-Null
 $menu.Items.Add('-') | Out-Null
 $miOpen  = $menu.Items.Add('打开 Web UI')
 $miTui   = $menu.Items.Add('终端界面 (TUI)')
 $miHead  = $menu.Items.Add('无界面模式 (Headless)')
 $miDocs  = $menu.Items.Add('DS 开放平台')
 $menu.Items.Add('-') | Out-Null
-$miRestart = $menu.Items.Add('重启 DSH')
+$miRestart = $menu.Items.Add('硬重启托盘')
 $miExit  = $menu.Items.Add('退出并停止 DSH')
 $miCur.Add_Click({ try { Open-Url 'https://deepseekdocs.com/' } catch { $notify.ShowBalloonTip(3000, 'DSH', "打开文档失败：$($_.Exception.Message)", 'Error') } })
 $miOpen.Add_Click({ try { Open-Url $webUrl } catch { $notify.ShowBalloonTip(3000, 'DSH', "打开 Web UI 失败：$($_.Exception.Message)", 'Error') } })
@@ -146,6 +169,8 @@ $notify.ContextMenuStrip = $menu
 # 启动后延迟检查更新：刷新顶部三行版本信息
 $script:newerAvail = $false
 $script:latestVersion = $null
+$script:gitMode = $false
+$script:pendingUpdate = $false
 $verCheckTimer = New-Object System.Windows.Forms.Timer
 $verCheckTimer.Interval = 2500
 $verCheckTimer.Add_Tick({
@@ -168,15 +193,26 @@ $verCheckTimer.Add_Tick({
             $miLatest.Enabled = $false
             $miLatest.Text = '最新版本：查询失败'
         }
-        # 启动托盘行：显示本机启动器版本 + 与 GitHub 主分支对比后的可更新状态
+        # 第三行：DSH魔偶助手（本地启动器版本）；第四行：魔偶最新版本 / 魔偶Git版本（同步模式）
         $ghVer = Get-GhLauncherVersion -TimeoutSec 8
         $lv = Get-LauncherVersion
-        if ($ghVer -and (Test-NewerVersion $lv $ghVer)) {
-            $miLauncher.Text = "启动托盘 $lv 版（点击可更新）"
+        $miLauncher.Text = "DSH魔偶助手 $lv"
+        if ($ghToken) {
+            $script:gitMode = $true
+            $miGit.Text = "魔偶Git版本 $ghVer（单击双向同步）"
         } elseif ($ghVer) {
-            $miLauncher.Text = "启动托盘 $lv 版（已是最新）"
+            $script:gitMode = $false
+            if (Test-NewerVersion $lv $ghVer) {
+                $script:pendingUpdate = $true
+                $miGit.Text = "魔偶最新版本 $ghVer（待更新）"
+            } else {
+                $script:pendingUpdate = $false
+                $miGit.Text = "魔偶最新版本 $ghVer（无需更新）"
+            }
         } else {
-            $miLauncher.Text = "启动托盘 $lv 版（检查失败）"
+            $script:gitMode = $false
+            $script:pendingUpdate = $false
+            $miGit.Text = '魔偶最新版本 无法检测'
         }
     } catch {}
 })
@@ -190,8 +226,58 @@ $miLatest.Add_Click({
         Show-UpgradeDialog 'DSH 升级' $instruction
     } catch { $notify.ShowBalloonTip(3000, 'DSH 升级', "准备失败：$($_.Exception.Message)", 'Error') }
 })
+# 第三行 5 连击 → 打开 token 配置；第四行：Git 模式（确认后双向同步）/ 待更新（更新本地）/ 无需更新（刷新 ≥1s）
+$script:launchClicks = New-Object System.Collections.ArrayList
 $miLauncher.Add_Click({
-    __MODE_SYNC_CALL__
+    try {
+        $now = Get-Date
+        [void]$script:launchClicks.Add($now)
+        while ($script:launchClicks.Count -gt 0 -and ($now - $script:launchClicks[0]).TotalSeconds -gt 3) { $script:launchClicks.RemoveAt(0) }
+        if ($script:launchClicks.Count -ge 5) {
+            $script:launchClicks.Clear()
+            $cfgScript = Join-Path $PSScriptRoot 'configure-git-credentials.vbs'
+            if (Test-Path -LiteralPath $cfgScript) {
+                $notify.ShowBalloonTip(2000, 'DSH', '打开 GitHub token 配置…', 'Info')
+                Start-Process wscript.exe -ArgumentList ('"' + $cfgScript + '"')
+            } else {
+                $notify.ShowBalloonTip(3000, 'DSH', "未找到 token 配置脚本：$cfgScript", 'Error')
+            }
+        }
+    } catch {}
+})
+$miGit.Add_Click({
+    try {
+        if ($script:gitMode) {
+            # 双向同步：确认后执行（非冲突场景）
+            $r = [System.Windows.Forms.MessageBox]::Show('确定执行双向同步吗？（将对比 GitHub 与本机启动器，按版本号/时间戳判定方向）', 'DSH 同步', [System.Windows.Forms.MessageBoxButtons]::OKCancel, [System.Windows.Forms.MessageBoxIcon]::Question)
+            if ($r -eq [System.Windows.Forms.DialogResult]::OK) {
+                __MODE_SYNC_CALL__
+            }
+        } elseif ($script:pendingUpdate) {
+            # 待更新：直接更新本地（拉取 GitHub 版本并应用）
+            $notify.ShowBalloonTip(2000, 'DSH', '正在从 GitHub 更新启动器…', 'Info')
+            $syncScript = Join-Path $PSScriptRoot 'dsh-sync.ps1'
+            if (Test-Path -LiteralPath $syncScript) {
+                Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$syncScript,'-Mode','__MODE_SYNC_MODE__','-InstallDir',$PSScriptRoot,'-Direction','pull' -WindowStyle Hidden
+            }
+        } else {
+            # 无需更新：状态刷新（查询中…，显示时间 ≥1s）
+            $miGit.Text = '魔偶最新版本 查询中…'
+            $miGit.Enabled = $false
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $ghVer2 = $null
+            try { $ghVer2 = Get-GhLauncherVersion -TimeoutSec 8 } catch {}
+            $sw.Stop()
+            $need = 1000 - $sw.ElapsedMilliseconds
+            if ($need -gt 0) { Start-Sleep -Milliseconds $need }
+            $lv2 = Get-LauncherVersion
+            $miGit.Enabled = $true
+            if ($ghVer2) {
+                if (Test-NewerVersion $lv2 $ghVer2) { $script:pendingUpdate = $true; $miGit.Text = "魔偶最新版本 $ghVer2（待更新）" }
+                else { $script:pendingUpdate = $false; $miGit.Text = "魔偶最新版本 $ghVer2（无需更新）" }
+            } else { $miGit.Text = '魔偶最新版本 无法检测' }
+        }
+    } catch {}
 })
 
 
@@ -199,7 +285,7 @@ $miLauncher.Add_Click({
 $notify.Add_DoubleClick({ param($s, $e) try { Open-Url $webUrl } catch { Start-Process $webUrl } })
 
 # 启动状态气泡（透明度）
-$notify.ShowBalloonTip(3000, 'DSH', $(if ($listener -eq 0) { "正在启动 DSH Web（PID $($proc.Id)）..." } else { "DSH Web 已在运行（PID $listener）" }), 'Info')
+$notify.ShowBalloonTip(3000, 'DSH', $(if ($listener -eq 0) { if ($null -eq $proc) { '正在启动 DSH Web...' } else { "正在启动 DSH Web（PID $($proc.Id)）..." } } else { "DSH Web 已在运行（PID $listener）" }), 'Info')
 
 # 非阻塞就绪检查（Timer，不卡消息循环）
 if ($OpenBrowser) {
@@ -211,8 +297,10 @@ $readyTimer = New-Object System.Windows.Forms.Timer
             $ok = $false
             if ($null -ne $script:proc) {
                 $script:proc.Refresh()
-                if ($script:proc.HasExited) { $readyTimer.Stop(); return }
-                if (Test-DshReady) { $ok = $true }
+                # 进程退出不再永久停止 Timer：看护可能自动重启成功，继续等待端口监听 + 就绪日志
+                if ($script:proc.HasExited) {
+                    if ((Get-DshListenerPid) -ne 0 -and (Test-DshReady)) { $ok = $true }
+                } elseif (Test-DshReady) { $ok = $true }
             } else {
                 try { $r = Invoke-WebRequest -Uri $webUrl -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 600) { $ok = $true } } catch {}
             }

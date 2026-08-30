@@ -96,9 +96,15 @@ function Restore-AllBackups {
             }
         } else {
             if (Test-Path -LiteralPath $dest) {
-                Remove-Item -LiteralPath $dest -Force
-                Write-Host "    移除（补丁新增）: $RelPath" -ForegroundColor Yellow
-                $ok = $true
+                # 与拷贝分支对称：单文件删除失败（如文件锁）记警告并继续循环，
+                # 保证还原循环不被 $ErrorActionPreference='Stop' 中断、清单最终回写
+                try {
+                    Remove-Item -LiteralPath $dest -Force
+                    Write-Host "    移除（补丁新增）: $RelPath" -ForegroundColor Yellow
+                    $ok = $true
+                } catch {
+                    Write-Host "    失败：移除 $RelPath：$($_.Exception.Message)" -ForegroundColor Yellow
+                }
             } else {
                 $ok = $true
             }
