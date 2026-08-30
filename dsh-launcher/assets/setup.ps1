@@ -124,6 +124,22 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $installDirText = if ($InstallDir) { $InstallDir } else { '(未设置)' }
 [System.IO.File]::WriteAllText((Join-Path $scriptDir 'install-dir.txt'), $installDirText + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
 
+# ---------- 单一来源：同步默认 repo/branch/候选分支（改 assets\sync-defaults.json 一处，全部分发物跟随） ----------
+$syncDefaults = @{ repo = 'moonwellxh/DSH-Launcher'; branch = 'main'; branches = @('main') }
+try {
+    $sdPath = Join-Path $scriptDir 'sync-defaults.json'
+    if (Test-Path -LiteralPath $sdPath) {
+        $sd = [System.IO.File]::ReadAllText($sdPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+        if ($sd.repo)     { $syncDefaults.repo   = [string]$sd.repo }
+        if ($sd.branch)   { $syncDefaults.branch = [string]$sd.branch }
+        if ($sd.branches) { $syncDefaults.branches = @($sd.branches | ForEach-Object { [string]$_ }) }
+    }
+} catch {}
+$ghRepoDefault    = $syncDefaults.repo
+$ghBranchDefault  = $syncDefaults.branch
+$ghBranchesLiteral = "@('" + (($syncDefaults.branches | ForEach-Object { $_ -replace "'","''" }) -join "','") + "')"
+
+
 # ---------- 渲染模板 ----------
 function Render([string]$name, [hashtable]$map) {
     $p = Join-Path (Join-Path $scriptDir 'tmpl') $name
@@ -166,7 +182,7 @@ function Render-Tray([string]$Mode, [hashtable]$VarMap) {
 }
 
 if ($mode -eq 'source') {
-    $map = @{ '__DSH_ROOT__' = $dsRoot; '__NODE_EXE__' = $nodeExe }
+    $map = @{ '__DSH_ROOT__' = $dsRoot; '__NODE_EXE__' = $nodeExe; '__GH_REPO__' = $ghRepoDefault; '__GH_BRANCH__' = $ghBranchDefault; '__GH_BRANCHES__' = $ghBranchesLiteral }
     $dshCmd  = Render 'dsh.cmd.tmpl' $map
     $trayPs1 = Render-Tray 'source' $map
 } else {
@@ -176,7 +192,7 @@ if ($mode -eq 'source') {
         Write-Host '      为避免裸命令名递归陷阱，中止生成。请检查 PATH 中的 dsh 安装后重试。' -ForegroundColor Red
         exit 1
     }
-    $map = @{ '__DSH_CMD__' = $dshCmdPath }
+    $map = @{ '__DSH_CMD__' = $dshCmdPath; '__GH_REPO__' = $ghRepoDefault; '__GH_BRANCH__' = $ghBranchDefault; '__GH_BRANCHES__' = $ghBranchesLiteral }
     $dshCmd  = Render 'dsh.cmd.path.tmpl' $map
     $trayPs1 = Render-Tray 'path' $map
 }
@@ -199,8 +215,13 @@ Copy-Item  (Join-Path $scriptDir '启动DSH-托盘.vbs')  (Join-Path $InstallDir
 Copy-Item  (Join-Path $scriptDir 'run-hidden.vbs')    (Join-Path $InstallDir 'run-hidden.vbs')    -Force
 Copy-Item  (Join-Path $scriptDir 'tray.ico')          (Join-Path $InstallDir 'tray.ico')          -Force
 Copy-Item  (Join-Path $scriptDir 'whale.ico')          (Join-Path $InstallDir 'whale.ico')          -Force
-Copy-Item  (Join-Path $scriptDir 'dsh-sync.ps1')      (Join-Path $InstallDir 'dsh-sync.ps1')      -Force
-Copy-Item  (Join-Path $scriptDir 'configure-git-credentials.vbs') (Join-Path $InstallDir 'configure-git-credentials.vbs') -Force
+# dsh-sync.ps1 / configure-git-credentials.vbs：读源 → 替换 __GH_REPO__/__GH_BRANCH__（单一来源 sync-defaults.json）→ 按各自编码写
+$syncTpl = [System.IO.File]::ReadAllText((Join-Path $scriptDir 'dsh-sync.ps1'), (New-Object System.Text.UTF8Encoding($false)))
+$syncTpl = $syncTpl.Replace('__GH_REPO__', $ghRepoDefault).Replace('__GH_BRANCH__', $ghBranchDefault)
+Write-Ps1 (Join-Path $InstallDir 'dsh-sync.ps1') $syncTpl
+$vbsTpl = [System.IO.File]::ReadAllText((Join-Path $scriptDir 'configure-git-credentials.vbs'), [System.Text.Encoding]::GetEncoding(936))
+$vbsTpl = $vbsTpl.Replace('__GH_REPO__', $ghRepoDefault).Replace('__GH_BRANCH__', $ghBranchDefault)
+[System.IO.File]::WriteAllBytes((Join-Path $InstallDir 'configure-git-credentials.vbs'), [System.Text.Encoding]::GetEncoding(936).GetBytes($vbsTpl))
 Copy-Item  (Join-Path $scriptDir 'whale-white.png')         (Join-Path $InstallDir 'whale-white.png')         -Force
 Copy-Item  (Join-Path $scriptDir 'whale-white.ico')         (Join-Path $InstallDir 'whale-white.ico')         -Force
 Step '已生成启动脚本'
