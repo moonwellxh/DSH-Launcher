@@ -1,4 +1,4 @@
-# dsh-launcher — DSH 一键启动 + 系统托盘
+# dsh-launcher — DSH魔偶助手 一键启动 + 系统托盘
 
 > **当前版本：1.1.80** · 适配 DSH：`0.1.0-rc.7` / `0.1.1-rc.2` · 平台：Windows（PowerShell 5.1+）
 
