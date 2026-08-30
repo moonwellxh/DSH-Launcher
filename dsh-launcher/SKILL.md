@@ -306,6 +306,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.80 | 0.1.0-rc.7、0.1.1-rc.2 | 「切换同步分支」对话框新增「获取已有分支」按钮：点击后 git ls-remote --heads 动态拉取 GitHub 现有分支，去重后追加到下拉列表（与固定候选并存，不覆盖）；git 自动探测常见安装路径/GitHub Desktop/PATH 兜底，直连↔系统代理双路回退（读注册表 ProxyServer），失败弹窗给出可操作提示；按钮获取中变灰显示「获取中…」 |
 | dsh-launcher（一键启动本体） | 1.1.79 | 0.1.0-rc.7、0.1.1-rc.2 | 同步 repo/branch/候选分支收敛为单一来源 `assets\sync-defaults.json`（改一处全局生效）：dsh-sync.ps1 / configure-git-credentials.vbs / mode-*.json 的分支值改为占位符 `__GH_REPO__` / `__GH_BRANCH__` / `__GH_BRANCHES__`，setup.ps1 渲染时从 sync-defaults.json 注入（dsh-sync.ps1 与 vbs 由 Copy-Item 改为渲染写）；托盘右键菜单新增「切换同步分支」项（下拉候选来自 sync-defaults.json 的 branches + 手动输入，选择后写 `~\.dsh\gh-sync\config.json` 的 branch 并重启托盘生效）；同步目标改 main 主分支 |
 | dsh-launcher（一键启动本体） | 1.1.78 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘「重启 DSH」改名为「硬重启托盘」，点击后先运行 setup.ps1（重新生成脚本/更新版本/应用补丁，-Wait 等待完成）再重启托盘 |
 | dsh-launcher（一键启动本体） | 1.1.77 | 0.1.0-rc.7、0.1.1-rc.2 | 「发布前检查清单」补第 5 步：同步完成后重启服务 + web 界面（让新脚本/版本号在运行中生效） |
