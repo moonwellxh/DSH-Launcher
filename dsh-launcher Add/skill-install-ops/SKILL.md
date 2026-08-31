@@ -5,7 +5,7 @@ description: |
   触发词：「安装 skill」「安装技能」「安装插件」「装环境」「环境适配」「首次使用配置」「装好没」「自检」「调试到可用」「skillhub.zip 安装」「My skills 里的技能」。
 ---
 
-# 技能/插件安装运维规范（skill-install-ops）
+# 技能/程序插件安装运维规范（skill-install-ops）
 
 把 `__skillhub.zip` 技能包（或任何程序插件）安装到本机并**调试到可用**的完整流程。
 本技能由 2026-08-24 安装 cad-scan-eye 的实战教训沉淀而成。
@@ -70,33 +70,67 @@ description: |
 
 1. 把安装中踩的坑和最终路径**写回技能文档**（环境表、troubleshooting），让下次安装有据可查。
 2. 向用户报告：装了哪些环境、检测四层各几条 PASS、文档改了哪里、还剩什么条件才能用（如 AutoCAD/天正需运行）。
-3. 涉及 `__skillhub.zip` 分发的：重打包归档到 GitHub 仓库
-   `releases\<当前版本>\`（zip 集中归档目录；已弃用 Z: 盘存档）。
+3. 涉及 `__skillhub.zip` 分发的：**Z: 归档已废弃（2026-08-28 用户明确，目录已改名 `My skills xxx` 标记，不再同步 Z:）**；分发改走 GitHub 私有仓库 `moonwellxh/DSH-Launcher`——配套包内嵌进主包 `assets\配套技能\`，主包经托盘右键「一键同步启动脚本」或 PAT 推送 GitHub（见第六节）。
 
 **归档定位铁律（2026-08-24 用户明确，2026-08-24 修订：用户最终拍板）**：技能是否进
-`dsh-launcher` 配套（`assets\配套技能\` + `dsh-launcher Add\` + 主包内嵌三处同步），
-**最终由用户定义，AI 不得自行决定**。流程：
+`dsh-launcher` 配套（`assets\配套技能\` 内嵌 + 主包内嵌 + GitHub 分发；Z: 的
+`dsh-launcher Add\` 已随 Z: 归档废弃），**最终由用户定义，AI 不得自行决定**。流程：
 1. **AI 预判断**：通用运维技能（如 zip-archive-ops / batch-files / charset-pitfalls /
    本技能）→ 倾向配套；个性化生产力技能（如 cad-scan-eye 扫描之眼）→ 倾向根目录独立；
 2. **必须询问用户**：明确告知预判断结果与理由，**取得用户同意后才能执行**配套或独立
-   归档操作（复制/打包/同步）；用户未确认前，**不得进行任何归档动作**。
+   归档操作（复制/打包/推送）；用户未确认前，**不得进行任何归档动作**。
 历史已定：当前配套 4 个（zip-archive-ops / batch-files / charset-pitfalls / 本技能）；
 `cad-scan-eye` 为根目录独立生产力技能。
+
+## 六、私有 GitHub 仓库下载与工具环境经验（2026-08-28 实测）
+
+### 私有仓库技能包下载（PAT 认证）
+- `moonwellxh/DSH-Launcher` 是**私有仓库**：raw URL 对私有仓库一律 404（直连/代理都
+  一样）；GitHub API 无凭据也 404（该账号显示 0 公开仓库）。**不能只试 raw URL 就断定
+  包不存在**，先用 PAT 走 API 探路。
+- 下载流程（2026-08-28 更新 dsh-launcher 1.1.64→1.1.65 实测）：
+  1. 取分支 sha：`GET https://api.github.com/repos/moonwellxh/DSH-Launcher/branches/<分支名>`
+     （带 `Authorization: Bearer <PAT>`）→ `commit.sha`；
+  2. 列包路径：`GET .../git/trees/<sha>?recursive=1`，筛 `\.zip$`；
+  3. **contents API 默认查 `main` 分支**，指定分支必须带 `?ref=<分支名>`，否则 404；
+  4. `GET .../contents/<路径>?ref=<分支>` 取 `download_url`（带签名 token）再下载；
+     **Accept 头必须 `application/json`**（`application/octet-stream` 会 415）；
+  5. 下载后立即 `ZipFile.OpenRead` 校验 + 读包内 `_meta.json` 确认版本。
+- PAT 只在命令行会话内使用，不写进脚本/文档/日志。
+
+### 工具环境坑（本会话实测）
+- **本工具执行环境是 Windows PowerShell 5.1**（`$PSVersionTable.PSVersion` = 5.1.x）：
+  `Get-Content -Raw` 不带 `-Encoding UTF8` 会按 ANSI/GBK 读 UTF-8 无 BOM 文件（如
+  manifest / _meta.json）→ 显示乱码，**文件本身没坏**（用
+  `[IO.File]::ReadAllBytes` + `[Text.Encoding]::UTF8.GetString` 验证）。读任何文本文件
+  显式 `-Encoding UTF8`。
+- **受限 shell 下 HTTPS 失败**：curl / Invoke-WebRequest 报
+  `schannel: SEC_E_NO_CREDENTIALS`（拿不到 TLS 凭据）→ 属沙箱限制，需提升权限后重试；
+  代理（7897）开着时直连 GitHub 也可能失败——先试 `curl -x http://127.0.0.1:7897 -L`，
+  再试直连，两路都不行再考虑权限问题。
+- **Z: 归档已废弃（2026-08-28 用户明确）**：原归档目录被用户改名 `My skills xxx` 作
+  废弃标记，**分发一律走 GitHub 私有仓库，不要再往 Z: 同步**。推 GitHub 前同样做
+  内容级比对（条目列表 + 逐文件哈希，见 zip-archive-ops），版本升级方向明确（旧→新、
+  文件集一致）才覆盖/推送。
 
 ## 本技能自身：版本与自动进化（必读）
 
 **本技能是 `dsh-launcher` 的配套技能（一键启动补丁）**，随 `dsh-launcher__skillhub.zip`
-分发（放 `assets\配套技能\`，setup.ps1 自动安装，同时同步一份到 `dsh-launcher Add\`）。
+分发（放 `assets\配套技能\`，setup.ps1 自动安装）。
 
-**自动进化规则（铁律）**：以后每次实际安装任何 skill/插件后，把**新踩的坑、新学到的
-适配方法**追加进本 SKILL.md（新增小节或速查表行），然后**三连同步**：
+**自动进化规则（铁律，2026-08-28 修订：Z: 废弃、GitHub-first）**：以后每次实际安装
+任何 skill/插件后，把**新踩的坑、新学到的适配方法**追加进本 SKILL.md（新增小节或
+速查表行），然后**三连同步**：
 1. `_meta.json` 的 `version` **递增**（如 1.1.0 → 1.1.1）+ `publishedAt` 更新为当前
    毫秒时间戳（setup.ps1 靠它判定"包内更新则重装"，时间戳不更新 = 已装机器不会收到
    新内容）；
-2. 打包 `skill-install-ops__skillhub.zip` 归档到 GitHub 仓库
-   `releases\<当前版本>\`（zip 集中归档目录）＋更新配套源树 `dsh-launcher Add\skill-install-ops\`；
-3. 复制进 `dsh-launcher\assets\配套技能\` 覆盖旧包，重打包
-   `dsh-launcher__skillhub.zip` 到 `releases\<当前版本>\` 并 git commit + push。
+2. 打包 `skill-install-ops__skillhub.zip` 复制进
+   `dsh-launcher\assets\配套技能\`（本机技能目录）覆盖旧包；
+3. 重打包 `dsh-launcher__skillhub.zip`（内嵌新版配套），经托盘右键「一键同步启动脚本」
+   推送到 GitHub 私有仓库 `moonwellxh/DSH-Launcher`（或 PAT 直推，需写权限）；
+   **Z: 归档已废弃，不再同步 Z:**。   **自 dsh-launcher 1.1.81 起此步自动化**：同步已把配套目录纳入比对，配套版本变化
+   自动检测推送（自动刷新主树内嵌 zip、发布 releases zip、同步 `dsh-launcher Add\`
+   源树），无需手动 bump 主包时间戳。
 
 **版本号防误覆盖**：任何一次进化都**必须升 `_meta.json` 的 `version`**（语义化：
 主.次.补丁），并在下方「版本历史」追加一行（版本 / 日期 / 变更内容）。**禁止**只改
@@ -106,6 +140,10 @@ description: |
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 1.1.6 | 2026-09-01 | 配套同步自动化（dsh-launcher 1.1.81 起）：同步纳入配套目录比对，配套版本变化自动检测推送，无需手动 bump 主包 publishedAt；主树内嵌 zip 自动刷新 |
+| 1.1.5 | 2026-08-30 | 本机速查表新增 image-mask 图片打码技能位置（C:\Users\雍远\.agents\skills\image-mask\，脚本 assets\mask-image.ps1 零依赖纯本地、不耗 token） |
+| 1.1.4 | 2026-08-28 | Z: 归档废弃、分发改 GitHub-first（用户明确）：移除 Z: 三连同步，改为配套包内嵌 + 主包重打包 + GitHub 推送；同步修正五/六节、归档定位铁律、本机速查表中的 Z: 说明 |
+| 1.1.3 | 2026-08-28 | 新增「六、私有 GitHub 仓库下载与工具环境经验」：moonwellxh/DSH-Launcher 为私有仓库需 PAT 认证下载（API 探路 + ?ref 分支 + download_url）；工具环境为 Windows PowerShell 5.1，Get-Content 需显式 -Encoding UTF8 否则 UTF-8 无 BOM 文件显示乱码；受限 shell HTTPS 报 schannel SEC_E_NO_CREDENTIALS 需提权；Z: 归档实际目录名是 `My skills xxx`（带 xxx 后缀）并同步修正文档内路径 |
 | 1.1.2 | 2026-08-24 | 归档定位铁律修订：AI 只做预判断，是否进 launcher 配套由用户最终拍板，未经用户同意不得执行任何归档操作 |
 | 1.1.1 | 2026-08-24 | 归档定位铁律：仅一键启动相关通用运维技能进配套；个性化生产力技能（cad-scan-eye）只放根目录独立，绝不混入配套 |
 | 1.1.0 | 2026-08-24 | 新增「本技能自身：版本与自动进化」章节；明确为 dsh-launcher 配套技能；四层检测加入端到端产出验证（orchestrator JSON）；记录 dxf2dwg 用 `-o` 指定输出、子进程输出按 GBK 解码会炸需 `errors="replace"` |
@@ -119,5 +157,9 @@ description: |
 | WorkBuddy Python | `C:\Users\雍远\.workbuddy\binaries\python\versions\3.13.12\python.exe`（3.13.x） |
 | 系统代理 | 注册表 `127.0.0.1:7897`（Clash Verge）；未开时 pip 走清华镜像+NO_PROXY |
 | 技能安装目录 | `C:\Users\雍远\.agents\skills\<技能名>\` |
+| image-mask 打码技能 | `C:\Users\雍远\.agents\skills\image-mask\assets\mask-image.ps1`（零依赖，System.Drawing 纯本地；SKILL.md 同目录） |
 | LibreDWG 探测路径 | `~/.workbuddy/bin/libredwg/`（dwgread.exe/dwg2dxf.exe，0.14 已装） |
 | 中文路径解压 | 用 .NET ZipFile，不用 bsdtar |
+| GitHub 技能仓库 | `moonwellxh/DSH-Launcher`（**私有**，需 PAT；分支 `feature/github-sync-v1.1.65`，包在 `releases/<版本>/`） |
+| 执行工具 | Windows PowerShell 5.1（`$PSVersionTable` 确认）；读文件显式 `-Encoding UTF8` |
+| Z: 归档 | **已废弃**（2026-08-28，目录改名 `My skills xxx` 仅留档），分发走 GitHub 私有仓库，不再同步 Z: |

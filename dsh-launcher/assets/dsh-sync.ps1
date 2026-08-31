@@ -154,6 +154,60 @@ function Get-SyncFileHash {
     $ms = New-Object System.IO.MemoryStream(, $norm)
     try { return (Get-FileHash -InputStream $ms -Algorithm SHA256).Hash } finally { $ms.Dispose() }
 }
+# ---------- 配套技能同步（1.1.81+：配套目录纳入比对，版本变化自动检测推送） ----------
+$script:CompanionSkills = @('zip-archive-ops','batch-files','charset-pitfalls','skill-install-ops')
+function Read-MetaObject {
+    param([string]$MetaFile)
+    if (-not (Test-Path -LiteralPath $MetaFile)) { return $null }
+    try { return (Get-Content -LiteralPath $MetaFile -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
+}
+function Read-ZipMetaObject {
+    param([string]$ZipPath, [string]$RootName)
+    if (-not (Test-Path -LiteralPath $ZipPath)) { return $null }
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+        $z = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+        try {
+            $e = $z.Entries | Where-Object { $_.FullName -eq "$RootName/_meta.json" } | Select-Object -First 1
+            if (-not $e) { return $null }
+            $sr = New-Object System.IO.StreamReader($e.Open())
+            try { return ($sr.ReadToEnd() | ConvertFrom-Json) } finally { $sr.Close() }
+        } finally { $z.Dispose() }
+    } catch { return $null }
+}
+function Get-CompanionSyncState {
+    # 比对：已装配套（~/.agents/skills/<c>） vs 本地主树内嵌 zip vs GitHub 主树内嵌 zip
+    # 返回：changed / localNewer / remoteNewer / notes / refresh（上传时需自动刷新内嵌 zip 的配套列表）
+    param([string]$SkillDir, [string]$RemoteBase, [string]$UserHome = $env:USERPROFILE)
+    $state = @{ changed = $false; localNewer = $false; remoteNewer = $false; notes = @(); refresh = @() }
+    foreach ($c in $script:CompanionSkills) {
+        $instMeta = Join-Path $UserHome ".agents\skills\$c\_meta.json"
+        $localEmb = Join-Path $SkillDir "assets\配套技能\$c`__skillhub.zip"
+        $remoteEmb = Join-Path $RemoteBase "assets\配套技能\$c`__skillhub.zip"
+        $lm = Read-MetaObject $instMeta
+        if (-not $lm) { continue }
+        $rm = Read-ZipMetaObject $remoteEmb $c
+        $le = Read-ZipMetaObject $localEmb $c
+        $lv = [string]$lm.version; $lp = [long]$lm.publishedAt
+        $rv = if ($rm) { [string]$rm.version } else { '' }
+        $rp = if ($rm) { [long]$rm.publishedAt } else { 0 }
+        $lev = if ($le) { [string]$le.version } else { '' }
+        if ($lv -eq $rv -and $lv -eq $lev) { continue }
+        $state.changed = $true
+        $dir2 = 'upload'
+        if ($rv) {
+            $vc2 = Compare-SyncVersion $lv $rv
+            if ($vc2 -gt 0) { $dir2 = 'upload' }
+            elseif ($vc2 -lt 0) { $dir2 = 'pull' }
+            elseif ($lp -ne $rp) { $dir2 = if ($lp -gt $rp) { 'upload' } else { 'pull' } }
+            else { $dir2 = 'upload' }
+        }
+        if ($dir2 -eq 'upload') { $state.localNewer = $true } else { $state.remoteNewer = $true }
+        if ($lv -ne $lev) { $state.refresh += $c }
+        $state.notes += "$c：本机 $lv vs GitHub $(if ($rv) { $rv } else { '无' })"
+    }
+    return $state
+}
 function Test-SyncRemoteTree {
     param([string]$Base)
     foreach ($n in @('SKILL.md', '_meta.json')) {
@@ -339,7 +393,8 @@ function Sync-LauncherScript {
         foreach ($k in @(($localMap.Keys + $remoteMap.Keys) | Select-Object -Unique)) {
             if ($localMap[$k] -ne $remoteMap[$k]) { $diff += $k }
         }
-        if ($diff.Count -eq 0) {
+        $compState = Get-CompanionSyncState $SkillDir $remoteBase
+        if ($diff.Count -eq 0 -and -not $compState.changed) {
             Write-SyncStatus 'result' '启动脚本与 GitHub 完全一致，无需同步。' @{ action = 'none' }
             return
         }
@@ -348,13 +403,40 @@ function Sync-LauncherScript {
         $rm = Get-Content -LiteralPath (Join-Path $remoteBase '_meta.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $lp = [long]$lm.publishedAt; $rp = [long]$rm.publishedAt
         $chosenDirection = $Direction
-        # Direction: version-first, timestamp-fallback (2026-08-30, same rule as companion skills)
+        # 方向判定（1.1.81+：主技能 + 配套技能双信号；版本优先、时间戳兜底）
         if ($Direction -eq 'auto') {
+            # 主技能方向信号
+            $mainDir = ''
             $vc = Compare-SyncVersion ([string]$lm.version) ([string]$rm.version)
-            if ($vc -gt 0) { $chosenDirection = 'upload' }
-            elseif ($vc -lt 0) { $chosenDirection = 'pull' }
-            elseif ($lp -ne $rp) { $chosenDirection = if ($lp -gt $rp) { 'upload' } else { 'pull' } }
-            else {
+            if ($vc -gt 0) { $mainDir = 'upload' }
+            elseif ($vc -lt 0) { $mainDir = 'pull' }
+            elseif ($lp -ne $rp) { $mainDir = if ($lp -gt $rp) { 'upload' } else { 'pull' } }
+            # 配套技能方向信号（已装配套 vs GitHub 主树内嵌 zip）
+            $compDir = ''
+            if ($compState.changed) {
+                if ($compState.localNewer -and -not $compState.remoteNewer) { $compDir = 'upload' }
+                elseif ($compState.remoteNewer -and -not $compState.localNewer) { $compDir = 'pull' }
+                else { $compDir = 'mixed' }
+            }
+            if ($mainDir -and $compDir) {
+                if ($compDir -eq 'mixed' -or $mainDir -ne $compDir) {
+                    $dlg = "主启动器：本机 v$($lm.version) vs GitHub v$($rm.version)。`n配套技能：$($compState.notes -join '；')。`n`n主方向与配套方向不一致，请选择同步方向（上传会提交到 GitHub，git 历史会保留旧版本）："
+                    $dir = Show-SyncDirectionDialog $dlg
+                    if ($dir -eq 'upload') { $chosenDirection = 'upload' }
+                    elseif ($dir -eq 'pull') { $chosenDirection = 'pull' }
+                    else { Write-SyncStatus 'result' '已取消同步，未做任何更改。' @{ action = 'cancelled' }; return }
+                } else { $chosenDirection = $mainDir }
+            } elseif ($mainDir) { $chosenDirection = $mainDir }
+            elseif ($compDir) {
+                if ($compDir -eq 'mixed') {
+                    $dlg = "配套技能本机与 GitHub 双向都有更新：$($compState.notes -join '；')。`n请选择同步方向（上传会提交到 GitHub，git 历史会保留旧版本）："
+                    $dir = Show-SyncDirectionDialog $dlg
+                    if ($dir -eq 'upload') { $chosenDirection = 'upload' }
+                    elseif ($dir -eq 'pull') { $chosenDirection = 'pull' }
+                    else { Write-SyncStatus 'result' '已取消同步，未做任何更改。' @{ action = 'cancelled' }; return }
+                } else { $chosenDirection = $compDir }
+            } else {
+            # 仅主树内容差异、版本与时间戳均相同：按文件修改时间分析并弹窗确认（原有逻辑）
             $localNewer = $false; $remoteNewer = $false
             foreach ($k in $diff) {
                 $rf = Join-Path $remoteBase ($k -replace '/','\')
@@ -392,7 +474,6 @@ function Sync-LauncherScript {
             }
             }
         }
-
         if ($chosenDirection -eq 'pull') {
             $curDsh = Get-CurrentDshVersion
             if ($rm.compatibleDsh) {
@@ -431,6 +512,14 @@ function Sync-LauncherScript {
             }
             Write-SyncStatus 'result' "已从 GitHub 更新启动脚本（$($rm.version)）。" @{ action = 'pulled'; version = [string]$rm.version }
         } elseif ($chosenDirection -eq 'upload' -or ($Direction -eq 'auto' -and $lp -gt $rp)) {
+                # 配套技能内嵌 zip 自动刷新（已装目录 → 主树 assets\配套技能\，保证发布主包内嵌一致）
+            foreach ($c in $compState.refresh) {
+                $instDir = Join-Path $env:USERPROFILE ".agents\skills\$c"
+                $emb = Join-Path $SkillDir "assets\配套技能\$c`__skillhub.zip"
+                if (Test-Path -LiteralPath $instDir) {
+                    if (Publish-SkillZip $instDir $emb $c) { Write-SyncStatus 'info' "配套技能 $c 内嵌包已自动刷新" }
+                }
+            }
             $srcTree = Join-Path $ghCache 'dsh-launcher'
             Get-ChildItem -LiteralPath $SkillDir -Recurse -File | ForEach-Object {
                 $rel = ($_.FullName.Substring($SkillDir.Length + 1) -replace '\\','/')
@@ -443,6 +532,25 @@ function Sync-LauncherScript {
                 $rel = ($_.FullName.Substring($srcTree.Length + 1) -replace '\\','/')
                 if (Is-SyncIgnored $rel) { return }
                 if (-not $localMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+            }
+                # 配套技能源树同步到仓库 dsh-launcher Add\<技能名>\（与 releases zip 一起归档）
+            foreach ($c in $script:CompanionSkills) {
+                $instDir = Join-Path $env:USERPROFILE ".agents\skills\$c"
+                if (-not (Test-Path -LiteralPath $instDir)) { continue }
+                $addTree = Join-Path $ghCache ("dsh-launcher Add\" + $c)
+                Get-ChildItem -LiteralPath $instDir -Recurse -File | ForEach-Object {
+                    $rel = ($_.FullName.Substring($instDir.Length + 1) -replace '\\','/')
+                    if (Is-SyncIgnored $rel) { return }
+                    $dst = Join-Path $addTree ($rel -replace '/','\')
+                    New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
+                    Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
+                }
+                Get-ChildItem -LiteralPath $addTree -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+                    $rel = ($_.FullName.Substring($addTree.Length + 1) -replace '\\','/')
+                    if (Is-SyncIgnored $rel) { return }
+                    $src = Join-Path $instDir ($rel -replace '/','\')
+                    if (-not (Test-Path -LiteralPath $src)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+                }
             }
             $releaseDir = Join-Path $ghCache ("releases\v" + $lm.version)
             New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
