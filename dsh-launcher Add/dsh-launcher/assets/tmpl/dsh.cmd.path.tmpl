@@ -1,0 +1,14 @@
+@echo off
+chcp 936 >nul
+setlocal
+REM ============================================================
+REM  dsh.cmd - DSH CLI 入口包装（DSH Launcher 生成，PATH 模式）
+REM ============================================================
+
+if /i "%~1"=="web" (
+    start "" powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0DSH-tray.ps1" -OpenBrowser
+    exit /b 0
+)
+
+call "__DSH_CMD__" %*
+exit /b %ERRORLEVEL%

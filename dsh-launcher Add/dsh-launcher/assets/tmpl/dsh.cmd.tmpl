@@ -1,0 +1,26 @@
+@echo off
+chcp 936 >nul
+setlocal
+REM ============================================================
+REM  dsh.cmd - DSH CLI 入口包装（DSH Launcher 生成，源码树模式）
+REM ============================================================
+set "_DSH_ROOT=__DSH_ROOT__"
+set "_NODE_EXE=__NODE_EXE__"
+
+if /i "%~1"=="web" (
+    start "" powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0DSH-tray.ps1" -OpenBrowser
+    exit /b 0
+)
+
+if not exist "%_NODE_EXE%" goto :missing
+if not exist "%_DSH_ROOT%\apps\cli\lib\bin.js" goto :missing
+
+pushd "%_DSH_ROOT%"
+"%_NODE_EXE%" apps\cli\lib\bin.js %*
+set "_EC=%ERRORLEVEL%"
+popd
+exit /b %_EC%
+
+:missing
+echo [dsh.cmd] 错误：找不到 DSH（%_DSH_ROOT%\apps\cli\lib\bin.js 或 node 缺失）。
+exit /b 1
