@@ -160,10 +160,20 @@ description: |
 6. 新增配套技能后，新机器 setup.ps1 会从 `assets\配套技能\*.zip` 自动安装到技能目录；依赖多的技能
    应自带 `check-env.ps1 -Install`（如 pdf-parse-v3）实现"同步即装、装完即用"。
 
+7. **受管凭据文件格式（2026-09-05 事故）**：`~/.dsh/.credentials.yaml` 顶层**只允许 `version` 与 `refs`**；密钥必须写在 `refs:` 区块下（缩进两空格），如：
+```yaml
+version: 1
+refs:
+  ANYSEARCH_API_KEY: "as_sk_..."
+```
+**插件 README 里的"顶层直接写 ANYSEARCH_API_KEY"示例已过时**——顶层追加会让 credentials 插件解析崩溃，dsh web 起不来（表现为"托盘反复崩溃/启动器坏了"的假象）。改凭据前先备份：`Copy-Item x.yaml x.yaml.bak-日期`；修复后用 `dsh web` 就绪信号验证。
+
 ## 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 1.1.8 | 2026-09-05 | 凭据格式事故沉淀：credentials.yaml 顶层仅允许 version/refs，密钥须入 refs 区块（插件 README 顶层示例已过时）；AnySearch 配 key 正确写法；改前备份 |
+
 | 1.1.7 | 2026-09-04 | 新增「七、配套分发与同步实战」：模板 vs 渲染副本/CRLF 归一与存在性先查；托盘一键同步拉取覆盖风险（先推后拉）；git push 用 gh-sync config token + Basic(x-access-token)（Bearer 被拒）；配套六位核对清单；中文 zip 条目用 python zipfile；check-env 一键依赖 |
 | 1.1.6 | 2026-09-01 | 配套同步自动化（dsh-launcher 1.1.81 起）：同步纳入配套目录比对，配套版本变化自动检测推送，无需手动 bump 主包 publishedAt；主树内嵌 zip 自动刷新 |
 | 1.1.5 | 2026-08-30 | 本机速查表新增 image-mask 图片打码技能位置（C:\Users\雍远\.agents\skills\image-mask\，脚本 assets\mask-image.ps1 零依赖纯本地、不耗 token） |
@@ -183,7 +193,7 @@ description: |
 | DSH 专用 Python（推荐） | `C:\Users\雍远\.dsh\runtime\python312\python.exe`（3.12.8；已装 pypdf/rapidocr_onnxruntime/pymupdf/pdfplumber；技能 pdf-parse-v3 的 check-env.ps1 一键补装） |
 | dsh-launcher 运行副本 | `D:\DSHS`（launcher.version 1.1.81；为技能源模板渲染出的本机实例，脚本差异多为占位符→真实值） |
 | gh-sync token | `~\.dsh\gh-sync\config.json`（内存使用；push 用 Basic base64("x-access-token:"+token)） |
-| AnySearch key 配置 | `~/.dsh/.credentials.yaml` 的 `ANYSEARCH_API_KEY`（匿名额度 10/窗口；带 key=20/窗口、日 1000 次） |
+| AnySearch key 配置 | `~/.dsh/.credentials.yaml` 的 **refs 区块**下（缩进两格）：`ANYSEARCH_API_KEY: "as_sk_..."`；**禁止顶层追加**（会崩 credentials 插件）。匿名 10/窗口，带 key 20/窗口、日 1000 次 |
 | 系统代理 | 注册表 `127.0.0.1:7897`（Clash Verge）；未开时 pip 走清华镜像+NO_PROXY |
 | 技能安装目录 | `C:\Users\雍远\.agents\skills\<技能名>\` |
 | image-mask 打码技能 | `C:\Users\雍远\.agents\skills\image-mask\assets\mask-image.ps1`（零依赖，System.Drawing 纯本地；SKILL.md 同目录） |
