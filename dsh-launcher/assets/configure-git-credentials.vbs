@@ -22,7 +22,7 @@ If Not fso.FolderExists(configDir) Then
     fso.CreateFolder(configDir)
 End If
 
-json = "{""repo"":""moonwellxh/DSH-Launcher"",""branch"":""feature/github-sync-v1.1.66"",""token"":""" & token & """}"
+json = "{""repo"":""__GH_REPO__"",""branch"":""__GH_BRANCH__"",""token"":""" & token & """}"
 
 Set stream = CreateObject("ADODB.Stream")
 stream.Type = 2

@@ -143,6 +143,120 @@ $menu.Items.Add($miLauncher) | Out-Null
 $miGit = New-Object System.Windows.Forms.ToolStripMenuItem
 $miGit.Text = '魔偶最新版本 查询中…'
 $menu.Items.Add($miGit) | Out-Null
+$miBranch = New-Object System.Windows.Forms.ToolStripMenuItem
+$miBranch.Text = "切换同步分支：$ghBranch"
+$menu.Items.Add($miBranch) | Out-Null
+$miBranch.Add_Click({
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        $f = New-Object System.Windows.Forms.Form
+        $f.Text = '切换同步分支'
+        $f.StartPosition = 'CenterScreen'
+        $f.FormBorderStyle = 'FixedDialog'
+        $f.MaximizeBox = $false; $f.MinimizeBox = $false
+        $f.ClientSize = New-Object System.Drawing.Size(380, 150)
+        $lbl = New-Object System.Windows.Forms.Label
+        $lbl.Text = '选择或输入 GitHub 分支（同步 dsh-launcher 源树）：'
+        $lbl.SetBounds(16, 14, 348, 22)
+        $cb = New-Object System.Windows.Forms.ComboBox
+        $cb.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDown
+        $cb.SetBounds(16, 44, 348, 26)
+        foreach ($b in $ghBranches) { [void]$cb.Items.Add([string]$b) }
+        $cb.Text = $ghBranch
+        $btnFetch = New-Object System.Windows.Forms.Button
+        $btnFetch.Text = '获取已有分支'
+        $btnFetch.SetBounds(16, 88, 110, 34)
+        $btnOk = New-Object System.Windows.Forms.Button
+        $btnOk.Text = '确定'
+        $btnOk.SetBounds(132, 88, 90, 34)
+        $btnCancel = New-Object System.Windows.Forms.Button
+        $btnCancel.Text = '取消'
+        $btnCancel.SetBounds(228, 88, 90, 34)
+        $script:branchChoice = $null
+        $btnFetch.Add_Click({
+            try {
+                $btnFetch.Enabled = $false
+                $btnFetch.Text = '获取中…'
+                $f.Refresh()
+                # 探测 git（常见安装路径 + PATH 兜底）
+                $gitExe = $null
+                $cands = @('C:\Program Files\Git\cmd\git.exe', (Join-Path $env:ProgramFiles 'Git\cmd\git.exe'), (Join-Path $env:LOCALAPPDATA 'Programs\Git\cmd\git.exe'), (Join-Path $env:LOCALAPPDATA 'Programs\MinGit\cmd\git.exe'))
+                $ghApp = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'GitHubDesktop') -Directory -Filter 'app-*' -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+                if ($ghApp) { $cands += (Join-Path $ghApp.FullName 'resources\app\git\cmd\git.exe') }
+                foreach ($c in $cands) { if ($c -and (Test-Path -LiteralPath $c)) { $gitExe = $c; break } }
+                if (-not $gitExe) { $g = Get-Command git -ErrorAction SilentlyContinue; if ($g) { $gitExe = $g.Source } }
+                if (-not $gitExe) { [System.Windows.Forms.MessageBox]::Show('未找到 git：无法获取分支列表。请安装 Git（https://git-scm.com）。', '切换同步分支', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null; return }
+                $remoteUrl = "https://github.com/$ghRepo.git"
+                # 系统代理探测，直连↔代理双路回退（与 dsh-sync 同策略）
+                $sysProxy = $null
+                try { $is = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop; if ($is.ProxyEnable -and $is.ProxyServer) { $sysProxy = [string]$is.ProxyServer } } catch {}
+                $strategies = New-Object System.Collections.ArrayList
+                [void]$strategies.Add(@())
+                if ($sysProxy) { [void]$strategies.Add(@('-c', "http.proxy=$sysProxy", '-c', "https.proxy=$sysProxy")) }
+                $out = ''; $lastCode = 1
+                foreach ($st in $strategies) {
+                    $cmd = @($st) + @('ls-remote', '--heads', $remoteUrl)
+                    $out = (& $gitExe @cmd 2>&1 | ForEach-Object { "$_" }) -join "`n"
+                    $lastCode = $LASTEXITCODE
+                    if ($lastCode -eq 0) { break }
+                }
+                if ($lastCode -ne 0) { [System.Windows.Forms.MessageBox]::Show("获取分支失败（exit $lastCode）。请检查网络/代理后重试。`n--- 输出 ---`n$out", '切换同步分支', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null; return }
+                $branches = @()
+                foreach ($line in ($out -split "`n")) {
+                    if ($line -match 'refs/heads/(.+)$') {
+                        $b = $Matches[1].Trim()
+                        if ($b -and $branches -notcontains $b) { $branches += $b }
+                    }
+                }
+                if ($branches.Count -eq 0) { [System.Windows.Forms.MessageBox]::Show('未解析到分支（仓库为空或地址有误）。', '切换同步分支', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null; return }
+                $added = 0
+                foreach ($b in ($branches | Sort-Object)) {
+                    if ($cb.Items -notcontains $b) { [void]$cb.Items.Add($b); $added++ }
+                }
+                $lbl.Text = "已获取 $($branches.Count) 个分支（新增 $added 个），请选择或输入："
+                [System.Windows.Forms.MessageBox]::Show("已获取 $($branches.Count) 个分支，新增 $added 个到下拉列表。", '切换同步分支', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+            } catch {
+                [System.Windows.Forms.MessageBox]::Show("获取分支失败：$($_.Exception.Message)", '切换同步分支', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+            } finally {
+                $btnFetch.Enabled = $true
+                $btnFetch.Text = '获取已有分支'
+            }
+        })
+        $btnOk.Add_Click({ $script:branchChoice = $cb.Text.Trim(); $f.Close() })
+        $btnCancel.Add_Click({ $script:branchChoice = $null; $f.Close() })
+        $f.Controls.Add($lbl); $f.Controls.Add($cb); $f.Controls.Add($btnFetch); $f.Controls.Add($btnOk); $f.Controls.Add($btnCancel)
+        [void]$f.ShowDialog()
+        $f.Dispose()
+        if (-not $script:branchChoice) { return }
+        $newBranch = $script:branchChoice
+        if ($newBranch -eq $ghBranch) { $notify.ShowBalloonTip(2000, 'DSH', "同步分支已是 $ghBranch", 'Info'); return }
+        $cfgPath = Join-Path $env:USERPROFILE '.dsh\gh-sync\config.json'
+        $existing = @{}
+        if (Test-Path -LiteralPath $cfgPath) {
+            try { $existing = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch {}
+        }
+        $newCfg = [ordered]@{ repo = $ghRepo; branch = $newBranch }
+        if ($existing.token) { $newCfg.token = [string]$existing.token }
+        elseif ($ghToken) { $newCfg.token = [string]$ghToken }
+        New-Item -ItemType Directory -Force -Path (Split-Path $cfgPath) | Out-Null
+        [System.IO.File]::WriteAllText($cfgPath, ($newCfg | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
+        $notify.ShowBalloonTip(2000, 'DSH', "同步分支已切换到 $newBranch，重启托盘生效…", 'Info')
+        $trayPid = $PID
+        $trayScript = $PSCommandPath
+        $helperPath = Join-Path $env:TEMP ("dsh-branch-" + [guid]::NewGuid().ToString('N') + '.ps1')
+        $helper = @"
+Start-Sleep -Seconds 1
+Stop-Process -Id $trayPid -Force -ErrorAction SilentlyContinue
+Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','$trayScript' -WindowStyle Hidden
+Remove-Item -LiteralPath '$helperPath' -Force -ErrorAction SilentlyContinue
+"@
+        [System.IO.File]::WriteAllText($helperPath, $helper, (New-Object System.Text.UTF8Encoding($false)))
+        Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$helperPath -WindowStyle Hidden
+        $notify.Visible = $false; $notify.Dispose()
+        [System.Windows.Forms.Application]::Exit()
+    } catch { $notify.ShowBalloonTip(3000, 'DSH', "切换分支失败：$($_.Exception.Message)", 'Error') }
+})
 $menu.Items.Add('-') | Out-Null
 $miOpen  = $menu.Items.Add('打开 Web UI')
 $miTui   = $menu.Items.Add('终端界面 (TUI)')

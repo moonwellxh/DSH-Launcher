@@ -89,7 +89,7 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 | `启动DSH.bat` | 菜单启动器（1 托盘+Web / 2 TUI / 3 Headless / 0 退出） |
 | `启动DSH-托盘.cmd` | 一键托盘（跳过菜单，直接启动 + 开浏览器；**已自隐藏窗口**：首次进入经 `run-hidden.vbs` 隐藏重入，双击不再闪命令行窗口） |
 | `启动DSH-托盘.vbs` | 一键托盘（**零命令行窗口**，wscript 直启 DSH-tray.ps1，推荐双击入口；配套 `run-hidden.vbs` 供 .cmd 自隐藏重入） |
-| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「启动托盘 x.x.x 版（点击可更新/已是最新）」（点击**与 GitHub 双向同步**（发布级）：配置优先环境变量 `DSH_SYNC_REPO` / `DSH_SYNC_BRANCH` / `DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 内置默认（repo=`moonwellxh/DSH-Launcher`、branch=`feature/github-sync-v1.1.65`）；网络自动探测系统代理、直连↔代理双路回退（命令级 `-c` 注入，不改全局 git 配置）；git 全程非交互（禁终端提示 + 禁 GCM 弹窗），失败按类给出可操作提示（未装 git / 认证缺失或失效 / 仓库分支 404 / 网络不通 / 非快进）；以仓库源树 `dsh-launcher/` 为比对对象逐文件内容比对（文本先归一化 CRLF→LF 再哈希，避免 autocrlf 造成"同内容不同哈希"；跳过机器特定文件 install-dir.txt），方向按双方实际 `_meta.json` 时间戳判定——GitHub 新则更新本地并重跑 setup 后自动重启托盘，本地新则更新源树 + 发布 **5 个 zip（主包+4 配套）** 到 `releases\<版本>\` + git 提交推送（`HEAD:<branch>`，token 经 http.extraheader 仅内存注入、不落盘不打印）并校验，一致则跳过，时间戳相同但内容不同则按 **git 提交时间 vs 本地修改时间**分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版；同步带互斥锁防并发；缓存损坏自动重建）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
+| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「启动托盘 x.x.x 版（点击可更新/已是最新）」（点击**与 GitHub 双向同步**（发布级）：配置优先环境变量 `DSH_SYNC_REPO` / `DSH_SYNC_BRANCH` / `DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 内置默认（repo=`moonwellxh/DSH-Launcher`、branch=`main`）；网络自动探测系统代理、直连↔代理双路回退（命令级 `-c` 注入，不改全局 git 配置）；git 全程非交互（禁终端提示 + 禁 GCM 弹窗），失败按类给出可操作提示（未装 git / 认证缺失或失效 / 仓库分支 404 / 网络不通 / 非快进）；以仓库源树 `dsh-launcher/` 为比对对象逐文件内容比对（文本先归一化 CRLF→LF 再哈希，避免 autocrlf 造成"同内容不同哈希"；跳过机器特定文件 install-dir.txt），方向按双方实际 `_meta.json` 时间戳判定——GitHub 新则更新本地并重跑 setup 后自动重启托盘，本地新则更新源树 + 发布 **5 个 zip（主包+4 配套）** 到 `releases\<版本>\` + git 提交推送（`HEAD:<branch>`，token 经 http.extraheader 仅内存注入、不落盘不打印）并校验，一致则跳过，时间戳相同但内容不同则按 **git 提交时间 vs 本地修改时间**分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版；同步带互斥锁防并发；缓存损坏自动重建）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
 | `dsh.cmd` | CLI 入口包装（`--version` / TUI / Headless） |
 | `whale-white.ico` / `whale-white.png` | 托盘图标（默认，白色描边鲸鱼版，镂空填白/下半白底） |
 | `tray.ico` / `whale.ico` | 备用图标（自动回退） |
@@ -286,7 +286,7 @@ DSH 前端是 client-plugin 图（index.html 的 `__DSH_BOOT__` 指向带 rev �
 重载才正确。给其他机器升级时的标准说法与同类情况清单见
 `assets\升级后重新渲染-标准说法.md`。
 
-GitHub 仓库（`moonwellxh/DSH-Launcher`，`feature/github-sync-v1.1.65` 分支）是各台机器修改的合集；仓库内**解压源树 `dsh-launcher/` 为维护对象**，
+GitHub 仓库（`moonwellxh/DSH-Launcher`，main 分支）是各台机器修改的合集；仓库内**解压源树 `dsh-launcher/` 为维护对象**，
 zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按目录留档）。已在用的机器按下面规则对齐：
 
 | 本次改了什么 | 已装机器要做的 |
@@ -306,6 +306,9 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.81 | 0.1.0-rc.7、0.1.1-rc.2 | 同步纳入配套目录比对：配套技能版本变化自动检测推送（无需手动 bump 主包时间戳）；上传时自动刷新主树内嵌配套 zip、同步仓库 `dsh-launcher Add\` 配套源树 |
+| dsh-launcher（一键启动本体） | 1.1.80 | 0.1.0-rc.7、0.1.1-rc.2 | 「切换同步分支」对话框新增「获取已有分支」按钮：点击后 git ls-remote --heads 动态拉取 GitHub 现有分支，去重后追加到下拉列表（与固定候选并存，不覆盖）；git 自动探测常见安装路径/GitHub Desktop/PATH 兜底，直连↔系统代理双路回退（读注册表 ProxyServer），失败弹窗给出可操作提示；按钮获取中变灰显示「获取中…」 |
+| dsh-launcher（一键启动本体） | 1.1.79 | 0.1.0-rc.7、0.1.1-rc.2 | 同步 repo/branch/候选分支收敛为单一来源 `assets\sync-defaults.json`（改一处全局生效）：dsh-sync.ps1 / configure-git-credentials.vbs / mode-*.json 的分支值改为占位符 `__GH_REPO__` / `__GH_BRANCH__` / `__GH_BRANCHES__`，setup.ps1 渲染时从 sync-defaults.json 注入（dsh-sync.ps1 与 vbs 由 Copy-Item 改为渲染写）；托盘右键菜单新增「切换同步分支」项（下拉候选来自 sync-defaults.json 的 branches + 手动输入，选择后写 `~\.dsh\gh-sync\config.json` 的 branch 并重启托盘生效）；同步目标改 main 主分支 |
 | dsh-launcher（一键启动本体） | 1.1.78 | 0.1.0-rc.7、0.1.1-rc.2 | 托盘「重启 DSH」改名为「硬重启托盘」，点击后先运行 setup.ps1（重新生成脚本/更新版本/应用补丁，-Wait 等待完成）再重启托盘 |
 | dsh-launcher（一键启动本体） | 1.1.77 | 0.1.0-rc.7、0.1.1-rc.2 | 「发布前检查清单」补第 5 步：同步完成后重启服务 + web 界面（让新脚本/版本号在运行中生效） |
 | dsh-launcher（一键启动本体） | 1.1.76 | 0.1.0-rc.7、0.1.1-rc.2 | 新增「发布前检查清单」章节：本地改动 → setup 生成 → 人工检查 → 确认 OK 才 bump + 同步（setup 与同步分离，禁止跳过检查直接上传） |
@@ -366,6 +369,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 2. 把新 zip 复制进本技能 `assets\配套技能\`（覆盖旧包）；
 3. 重打包 `dsh-launcher__skillhub.zip` 到 `releases\<当前版本>\`，git commit + push
    （setup.ps1 按时间戳自动分发新版）。
+> **自 1.1.81 起自动化**：一键同步已把配套目录纳入比对，配套版本变化自动检测推送（自动刷新主树内嵌 zip、发布 releases zip、同步 `dsh-launcher Add\` 源树）；第 2、3 步无需手动执行，主包版本不变也无需手动 bump 时间戳。
 
 **以后新增脚本技能**（成为一键启动配套的通用规则）：
 1. 建好技能（SKILL.md + _meta.json，编码/结构遵守 charset-pitfalls 技能）；
