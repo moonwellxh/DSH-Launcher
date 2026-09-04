@@ -46,9 +46,20 @@ python assets\finalize_v3.py out_v3.json report.json   # A3/A6 质检 + 抽样�
 ## 4) 并行纪律与故障
 - RapidOCR 多进程会抢满 CPU → 单进程顺序跑；确需并行则 `$env:OMP_NUM_THREADS=4`。
 - OCR 老扫描件章题偶有错字（页码可信、文字按页回查）；表格单元数据不回造，原文在 text。
-- 缺 pypdf/rapidocr/pymupdf：脚本内置 `Ensure-PyPdf` 自动补装；其余 `pip install rapidocr_onnxruntime pymupdf pdfplumber`。
+- 新机器依赖：直接 `powershell -File assets\check-env.ps1 -Install`（自动装 pypdf/rapidocr_onnxruntime/pymupdf/pdfplumber）；缺 `~/.dsh/runtime` Python 时按提示安装或设 `$env:DSH_PYTHON`。
 
 ## 5) 与其他技能协作
 - 查标准状态/编号 → **`std-official-search`**；其 openstd 图档页图下载后可用本技能 render/OCR 解析。
-- 测试：`tests\run-tests.ps1` 四层自测 22 项（语法/环境/layout/rapid/结构化，离线全绿；官方源实网冒烟在 std-official-search）。
+- 测试：`tests\run-tests.ps1` 四层自测 23 项（语法/环境/check-env/layout/rapid/结构化，离线全绿；官方源实网冒烟在 std-official-search）。
 - 输出规范：内置 `docs\PDF解析输出JSON规范.md`。拆分自原 `gb-standard-direct`（2026-09）。
+
+## 6) 经验与踩坑速查（实测沉淀）
+- **引擎=承载形态**：有文本层 → layout(PyMuPDF 坐标/阅读序/版式)；纯扫描 → RapidOCR(量产)；快速预览 → WinRT。
+- **RapidOCR 决策数据**：1987 老扫描同页对拍完胜 WinRT（乱码→干净，表格注文可读）；`det_limit_side_len=960`，CPU ~2-11s/页；**单进程顺序**，每页报进度+每页落盘+断点续跑（重跑自动跳过已完成页）。
+- **长任务纪律**：进度读磁盘产物，不依赖后台回传；checkpoint 文件即真相。
+- **分诊阈值**：文本页=可读率≥50% 且 ≥5 可读字符（封面/标题短页仍走文本直抽）；可读率<30% 判伪文本层按 OCR。
+- **结构解析启发式**：目录页按"一页≥3 个章行"整体剔除；条文号须匹配当前章号前缀（防表格数字行误判）；拆条失败留 `pages[].text` 不强行拆（A1）。
+- **pypdf 加密坑**：锁态访问页抛 `FileNotDecryptedError` → 先探测 encrypted/locked 再优雅报错。
+- **夹具先验**：手造测试 PDF 的 XObject 引用号/结构必须先自检——坏夹具曾造成"OCR 全空"假警报（先验夹具再判产品缺陷）。
+- **编码铁律**：含中文 .ps1 必须 UTF-8 BOM（PS5.1 无 BOM 按 GBK 解析即炸）；数据文件统一 UTF-8。
+- **WinRT(PS5.1)**：类型需先注册；`IAsyncAction`(RenderToStream)与 `IAsyncOperation<T>` 用不同 AsTask 封装；pwsh7 无 WinRT 投影，须经 `powershell.exe -File` 调用。

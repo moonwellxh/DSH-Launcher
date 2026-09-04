@@ -136,10 +136,35 @@ description: |
 主.次.补丁），并在下方「版本历史」追加一行（版本 / 日期 / 变更内容）。**禁止**只改
 内容不升版本——否则多台机器合并时无法区分新旧，可能旧包覆盖新内容。
 
+## 七、配套分发与同步实战（2026-09-04 拆分/打包沉淀）
+
+1. **"模板 vs 渲染副本"认知**：dsh-launcher 技能源是**通用模板**（含 `__GH_REPO__/__GH_BRANCH__`
+   占位符），运行副本（如 `D:\DSHS`）是安装/同步时渲染的**本机实例**（真实仓库名等）。
+   做"源 vs 副本"比对时：① 先**行尾归一（CRLF→LF）**再哈希/比较（git autocrlf 会制造假差异）；
+   ② 先确认文件**存在**再比（对比不存在文件会把"缺失"误报成"内容不同"）。
+2. **托盘「一键同步」方向陷阱**：同步方向判定为**拉取**时会**覆盖本地镜像内未推送的提交/文件**，
+   且可能把工作树 reset 掉 → 改完配套/源树**先 commit+push，再跑同步**；本地权威副本始终以
+   `~\.agents\skills\<技能>\` 为准，镜像（`~\.dsh\gh-sync\DSH-Launcher`）只是仓库工作副本。
+3. **git push 凭据**：Bearer 头会被 GitHub 拒；用 `~\.dsh\gh-sync\config.json` 里的 token，
+   **Basic 认证**可推：`[Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$tok"))` +
+   `git -c "http.extraheader=Authorization: Basic <b64>" push`；token 仅内存使用不落盘不打印；
+   先 `Test-NetConnection 127.0.0.1 -Port 7897`（代理开）再推，代理关时用 `-c http.proxy= https.proxy=` 直连尝试。
+4. **配套技能分发六位核对清单**（每次改配套必查，`git log origin/main..HEAD` 应为 0 且远端内容可 `git cat-file -e HEAD:路径` 命中）：
+   ① 本机 `dsh-launcher\assets\配套技能\<slug>__skillhub.zip`；② 镜像主树 `dsh-launcher\assets\配套技能\`
+   同 zip；③ 镜像 `releases\<版本>\`（主包+各配套）；④ `dsh-launcher Add\<slug>\` 源树（解包副本）；
+   ⑤ 主包重建后须含新配套条目（.NET `ZipFile.OpenRead` 数条目 + 匹配 `__skillhub.zip` 条目）；
+   ⑥ 远端推送成功（`ls-remote origin main` 前 7 位=本地 HEAD）。
+5. **zip 条目名中文**：含中文文件名（如 `docs\PDF解析输出JSON规范.md`）打包用 **python zipfile**
+   （自动 UTF-8 条目旗标），避免 .NET Framework 按 ANSI 写坏；建包后 `ZipFile.OpenRead`+`Expand-Archive`
+   往返校验；不含 `__pycache__/.pyc`。
+6. 新增配套技能后，新机器 setup.ps1 会从 `assets\配套技能\*.zip` 自动安装到技能目录；依赖多的技能
+   应自带 `check-env.ps1 -Install`（如 pdf-parse-v3）实现"同步即装、装完即用"。
+
 ## 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 1.1.7 | 2026-09-04 | 新增「七、配套分发与同步实战」：模板 vs 渲染副本/CRLF 归一与存在性先查；托盘一键同步拉取覆盖风险（先推后拉）；git push 用 gh-sync config token + Basic(x-access-token)（Bearer 被拒）；配套六位核对清单；中文 zip 条目用 python zipfile；check-env 一键依赖 |
 | 1.1.6 | 2026-09-01 | 配套同步自动化（dsh-launcher 1.1.81 起）：同步纳入配套目录比对，配套版本变化自动检测推送，无需手动 bump 主包 publishedAt；主树内嵌 zip 自动刷新 |
 | 1.1.5 | 2026-08-30 | 本机速查表新增 image-mask 图片打码技能位置（C:\Users\雍远\.agents\skills\image-mask\，脚本 assets\mask-image.ps1 零依赖纯本地、不耗 token） |
 | 1.1.4 | 2026-08-28 | Z: 归档废弃、分发改 GitHub-first（用户明确）：移除 Z: 三连同步，改为配套包内嵌 + 主包重打包 + GitHub 推送；同步修正五/六节、归档定位铁律、本机速查表中的 Z: 说明 |
@@ -155,6 +180,10 @@ description: |
 |----|----|
 | 真实用户名 | `C:\Users\雍远`（**不是** moonw） |
 | WorkBuddy Python | `C:\Users\雍远\.workbuddy\binaries\python\versions\3.13.12\python.exe`（3.13.x） |
+| DSH 专用 Python（推荐） | `C:\Users\雍远\.dsh\runtime\python312\python.exe`（3.12.8；已装 pypdf/rapidocr_onnxruntime/pymupdf/pdfplumber；技能 pdf-parse-v3 的 check-env.ps1 一键补装） |
+| dsh-launcher 运行副本 | `D:\DSHS`（launcher.version 1.1.81；为技能源模板渲染出的本机实例，脚本差异多为占位符→真实值） |
+| gh-sync token | `~\.dsh\gh-sync\config.json`（内存使用；push 用 Basic base64("x-access-token:"+token)） |
+| AnySearch key 配置 | `~/.dsh/.credentials.yaml` 的 `ANYSEARCH_API_KEY`（匿名额度 10/窗口；带 key=20/窗口、日 1000 次） |
 | 系统代理 | 注册表 `127.0.0.1:7897`（Clash Verge）；未开时 pip 走清华镜像+NO_PROXY |
 | 技能安装目录 | `C:\Users\雍远\.agents\skills\<技能名>\` |
 | image-mask 打码技能 | `C:\Users\雍远\.agents\skills\image-mask\assets\mask-image.ps1`（零依赖，System.Drawing 纯本地；SKILL.md 同目录） |
