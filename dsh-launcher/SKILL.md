@@ -89,7 +89,7 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 | `启动DSH.bat` | 菜单启动器（1 托盘+Web / 2 TUI / 3 Headless / 0 退出） |
 | `启动DSH-托盘.cmd` | 一键托盘（跳过菜单，直接启动 + 开浏览器；**已自隐藏窗口**：首次进入经 `run-hidden.vbs` 隐藏重入，双击不再闪命令行窗口） |
 | `启动DSH-托盘.vbs` | 一键托盘（**零命令行窗口**，wscript 直启 DSH-tray.ps1，推荐双击入口；配套 `run-hidden.vbs` 供 .cmd 自隐藏重入） |
-| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「启动托盘 x.x.x 版（点击可更新/已是最新）」（点击**与 GitHub 双向同步**（发布级）：配置优先环境变量 `DSH_SYNC_REPO` / `DSH_SYNC_BRANCH` / `DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 内置默认（repo=`moonwellxh/DSH-Launcher`、branch=`main`）；网络自动探测系统代理、直连↔代理双路回退（命令级 `-c` 注入，不改全局 git 配置）；git 全程非交互（禁终端提示 + 禁 GCM 弹窗），失败按类给出可操作提示（未装 git / 认证缺失或失效 / 仓库分支 404 / 网络不通 / 非快进）；以仓库源树 `dsh-launcher/` 为比对对象逐文件内容比对（文本先归一化 CRLF→LF 再哈希，避免 autocrlf 造成"同内容不同哈希"；跳过机器特定文件 install-dir.txt），方向按双方实际 `_meta.json` 时间戳判定——GitHub 新则更新本地并重跑 setup 后自动重启托盘，本地新则更新源树 + 发布 **5 个 zip（主包+4 配套）** 到 `releases\<版本>\` + git 提交推送（`HEAD:<branch>`，token 经 http.extraheader 仅内存注入、不落盘不打印）并校验，一致则跳过，时间戳相同但内容不同则按 **git 提交时间 vs 本地修改时间**分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版；同步带互斥锁防并发；缓存损坏自动重建）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
+| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「启动托盘 x.x.x 版（点击可更新/已是最新）」（点击**与 GitHub 双向同步**（发布级）：配置优先环境变量 `DSH_SYNC_REPO` / `DSH_SYNC_BRANCH` / `DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 内置默认（repo=`moonwellxh/DSH-Launcher`、branch=`main`）；网络自动探测系统代理、直连↔代理双路回退（命令级 `-c` 注入，不改全局 git 配置）；git 全程非交互（禁终端提示 + 禁 GCM 弹窗），失败按类给出可操作提示（未装 git / 认证缺失或失效 / 仓库分支 404 / 网络不通 / 非快进）；以仓库源树 `dsh-launcher/` 为比对对象逐文件内容比对（文本先归一化 CRLF→LF 再哈希，避免 autocrlf 造成"同内容不同哈希"；跳过机器特定文件 install-dir.txt），方向**永不自动判定**：引擎只按版本号/时间戳/内容差异给出**建议**，由用户在弹出的方向选择框自行决定 上传到 GitHub / 拉取 GitHub 版本 / 取消，确认后才执行（绝不自动执行方向；2026-09-05 规则）。上传方向 = 更新源树 + 发布 **主包+全部配套** 到 `releases\<版本>\` + git 提交推送（`HEAD:<branch>`，token 经 http.extraheader 仅内存注入、不落盘不打印）并校验，一致则跳过，时间戳相同但内容不同则按 **git 提交时间 vs 本地修改时间**分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版；同步带互斥锁防并发；缓存损坏自动重建）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
 | `dsh.cmd` | CLI 入口包装（`--version` / TUI / Headless） |
 | `whale-white.ico` / `whale-white.png` | 托盘图标（默认，白色描边鲸鱼版，镂空填白/下半白底） |
 | `tray.ico` / `whale.ico` | 备用图标（自动回退） |
@@ -131,7 +131,7 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
   （托盘生成物内不再内嵌同步实现，原 `tmpl\parts\70-sync-*.ps1` 内嵌副本已删除）。同步以仓库源树 `dsh-launcher/` 为比对对象，逐文件
   **内容级比对（不信任缓存/版本号）**——文本文件先归一化 CRLF→LF 再 SHA256（git `core.autocrlf` 会把检出文件
   变成 CRLF，与 zip 内 LF"同内容不同哈希"，必须归一化；二进制如 zip/ico/png 保持原始字节）；**跳过机器特定文件**
-  （`assets/install-dir.txt`）；方向按双方实际 `_meta.json` 时间戳判定；时间戳相同但内容不同时按 **git 提交时间 vs
+  （`assets/install-dir.txt`）；方向**永不自动判定**：引擎只给出建议（版本号/时间戳/内容差异信号），由用户在弹出的方向选择框自行决定 上传/拉取/取消——绝不自动执行方向（2026-09-05 规则）；时间戳相同但内容不同时按 **git 提交时间 vs
   本地修改时间**分析并弹窗由用户确认方向（上传/拉取/取消），**绝不自动覆盖远端良包**。配置/健壮性：repo/branch/token
   可配置（环境变量 `DSH_SYNC_REPO/DSH_SYNC_BRANCH/DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 默认）；
   网络自动探测系统代理（注册表）直连↔代理双路回退；git 非交互（`GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=Never`

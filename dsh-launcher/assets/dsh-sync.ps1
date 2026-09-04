@@ -297,6 +297,32 @@ function Get-CurrentDshVersion {
 }
 
 # ---------- 方向确认弹窗（独立运行时使用） ----------
+function Get-ContentDiffAnalysis {
+    # 真实文件 diff 分析：逐文件对比 本地修改时间 vs GitHub 该文件最近提交时间（只用于给建议）
+    param([string]$SkillDir, [string]$RemoteBase, [string]$GhCache, [string[]]$DiffFiles)
+    $localNewer = 0; $remoteNewer = 0
+    $samples = @()
+    foreach ($k in $DiffFiles) {
+        $samples += (($k -replace '^.*?([^/]+)$', '$1'))
+        $rf = Join-Path $RemoteBase ($k -replace '/', '\')
+        $rt = [datetime]::MinValue
+        if (Test-Path -LiteralPath $rf) {
+            $cl = (Invoke-SyncGit @('log', '-1', '--format=%ct', '--', $k) $GhCache).text
+            if ($cl -match '\d+') { $ct = [long]$Matches[0]; if ($ct -gt 0) { $rt = [datetimeoffset]::FromUnixTimeSeconds($ct).UtcDateTime } }
+        }
+        $lf = Join-Path $SkillDir ($k -replace '/', '\')
+        $lt = if (Test-Path -LiteralPath $lf) { (Get-Item -LiteralPath $lf).LastWriteTimeUtc } else { [datetime]::MinValue }
+        if ($lt -gt $rt) { $localNewer++ } elseif ($rt -gt $lt) { $remoteNewer++ }
+    }
+    $sug = 'mixed'
+    if ($localNewer -gt 0 -and $remoteNewer -eq 0) { $sug = 'upload' }
+    elseif ($remoteNewer -gt 0 -and $localNewer -eq 0) { $sug = 'pull' }
+    $cnt = @($DiffFiles).Count
+    $sample = (($samples | Select-Object -First 5) -join '、')
+    if ($cnt -gt 5) { $sample += ' 等' }
+    return @{ count = $cnt; localNewer = $localNewer; remoteNewer = $remoteNewer; suggest = $sug; sample = $sample }
+}
+
 function Show-SyncDirectionDialog([string]$text) {
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
     Add-Type -AssemblyName System.Drawing -ErrorAction Stop
@@ -403,75 +429,58 @@ function Sync-LauncherScript {
         $rm = Get-Content -LiteralPath (Join-Path $remoteBase '_meta.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $lp = [long]$lm.publishedAt; $rp = [long]$rm.publishedAt
         $chosenDirection = $Direction
-        # 方向判定（1.1.81+：主技能 + 配套技能双信号；版本优先、时间戳兜底）
+        # 方向判定仅用于【建议】：绝不自动执行方向（2026-09-05 用户规则）
         if ($Direction -eq 'auto') {
-            # 主技能方向信号
             $mainDir = ''
             $vc = Compare-SyncVersion ([string]$lm.version) ([string]$rm.version)
             if ($vc -gt 0) { $mainDir = 'upload' }
             elseif ($vc -lt 0) { $mainDir = 'pull' }
             elseif ($lp -ne $rp) { $mainDir = if ($lp -gt $rp) { 'upload' } else { 'pull' } }
-            # 配套技能方向信号（已装配套 vs GitHub 主树内嵌 zip）
             $compDir = ''
             if ($compState.changed) {
                 if ($compState.localNewer -and -not $compState.remoteNewer) { $compDir = 'upload' }
                 elseif ($compState.remoteNewer -and -not $compState.localNewer) { $compDir = 'pull' }
                 else { $compDir = 'mixed' }
             }
-            if ($mainDir -and $compDir) {
-                if ($compDir -eq 'mixed' -or $mainDir -ne $compDir) {
-                    $dlg = "主启动器：本机 v$($lm.version) vs GitHub v$($rm.version)。`n配套技能：$($compState.notes -join '；')。`n`n主方向与配套方向不一致，请选择同步方向（上传会提交到 GitHub，git 历史会保留旧版本）："
-                    $dir = Show-SyncDirectionDialog $dlg
-                    if ($dir -eq 'upload') { $chosenDirection = 'upload' }
-                    elseif ($dir -eq 'pull') { $chosenDirection = 'pull' }
-                    else { Write-SyncStatus 'result' '已取消同步，未做任何更改。' @{ action = 'cancelled' }; return }
-                } else { $chosenDirection = $mainDir }
-            } elseif ($mainDir) { $chosenDirection = $mainDir }
-            elseif ($compDir) {
-                if ($compDir -eq 'mixed') {
-                    $dlg = "配套技能本机与 GitHub 双向都有更新：$($compState.notes -join '；')。`n请选择同步方向（上传会提交到 GitHub，git 历史会保留旧版本）："
-                    $dir = Show-SyncDirectionDialog $dlg
-                    if ($dir -eq 'upload') { $chosenDirection = 'upload' }
-                    elseif ($dir -eq 'pull') { $chosenDirection = 'pull' }
-                    else { Write-SyncStatus 'result' '已取消同步，未做任何更改。' @{ action = 'cancelled' }; return }
-                } else { $chosenDirection = $compDir }
-            } else {
-            # 仅主树内容差异、版本与时间戳均相同：按文件修改时间分析并弹窗确认（原有逻辑）
-            $localNewer = $false; $remoteNewer = $false
-            foreach ($k in $diff) {
-                $rf = Join-Path $remoteBase ($k -replace '/','\')
-                $rt = [datetime]::MinValue
-                if (Test-Path -LiteralPath $rf) {
-                    $cl = (Invoke-SyncGit @('log', '-1', '--format=%ct', '--', $k) $ghCache).text
-                    if ($cl -match '\d+') {
-                        $ct = [long]$Matches[0]
-                        if ($ct -gt 0) { $rt = [datetimeoffset]::FromUnixTimeSeconds($ct).UtcDateTime }
-                    }
-                }
-                $lf = Join-Path $SkillDir ($k -replace '/','\')
-                $lt = if (Test-Path -LiteralPath $lf) { (Get-Item -LiteralPath $lf).LastWriteTimeUtc } else { [datetime]::MinValue }
-                if ($lt -gt $rt) { $localNewer = $true } elseif ($rt -gt $lt) { $remoteNewer = $true }
-                if ($localNewer -and $remoteNewer) { break }
+            # 完全一致：无需同步
+            if (-not $mainDir -and -not $compDir -and @($diff).Count -eq 0) {
+                Write-SyncStatus 'result' '启动脚本与 GitHub 完全一致，无需同步。' @{ action = 'none' }
+                return
             }
-            $sug = '双向都有更新，无法自动判定，请人工确认合并方向'
-            if ($localNewer -and -not $remoteNewer) { $sug = '本机较新（推荐：上传本机版本到 GitHub）' }
-            elseif ($remoteNewer -and -not $localNewer) { $sug = 'GitHub 较新（推荐：拉取 GitHub 版本到本机）' }
-            $showFiles = ($diff | Select-Object -First 5) -join '，'
-            if ($diff.Count -gt 5) { $showFiles += ' 等' }
-            $dlg = "启动脚本：本机与 GitHub 内容不同（$($diff.Count) 个文件：$showFiles）。`n按修改时间分析：$sug。`n`n请选择同步方向（上传会提交到 GitHub，git 历史会保留旧版本）："
+            # 组织建议文本（含真实文件 diff 分析；建议措辞与按钮一致）
+            $rec = ''
+            $signals = @()
+            if ($mainDir) {
+                $mainLabel = if ($mainDir -eq 'upload') { '上传到 GitHub' } else { '拉取 GitHub 版本' }
+                $signals += ('主启动器（版本/时间戳）：本机 v' + $lm.version + ' vs GitHub v' + $rm.version + ' → 建议 ' + $mainLabel)
+            }
+            if ($compDir) { $signals += ('配套技能：本机与 GitHub 内嵌包方向=' + $compDir) }
+            $cf = $null
+            if (@($diff).Count -gt 0) { $cf = Get-ContentDiffAnalysis $SkillDir $remoteBase $ghCache $diff }
+            if ($cf) {
+                $signals += ('内容 diff：' + $cf.count + ' 个文件（' + $cf.sample + '）；本机较新 ' + $cf.localNewer + '，GitHub 较新 ' + $cf.remoteNewer)
+            }
+            if ($mainDir) { $rec = if ($mainDir -eq 'upload') { '上传到 GitHub' } else { '拉取 GitHub 版本' } }
+            elseif ($compDir -and $compDir -ne 'mixed') { $rec = if ($compDir -eq 'upload') { '上传到 GitHub' } else { '拉取 GitHub 版本' } }
+            elseif ($compDir) { $rec = '（配套技能双向更新，需人工判断）' }
+            elseif ($cf) {
+                if ($cf.suggest -eq 'upload') { $rec = '上传到 GitHub' }
+                elseif ($cf.suggest -eq 'pull') { $rec = '拉取 GitHub 版本' }
+                else { $rec = '（双向均有更新，需人工判断）' }
+            } else { $rec = '（未检测到明确差异，需人工判断）' }
+            $dlg = '同步方向选择（系统只给建议，绝不自动判定方向）：'
+            foreach ($sg in $signals) { $dlg += "`n- " + $sg }
+            $dlg += "`n`n建议选择：" + $rec
+            $dlg += '。请点选要执行的方向（与按钮一致）：上传到 GitHub / 拉取 GitHub 版本 / 取消（上传会提交到 GitHub，git 历史会保留旧版本）'
+
             $dir = Show-SyncDirectionDialog $dlg
             if ($dir -eq 'upload') {
-                $lm.publishedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-                [System.IO.File]::WriteAllText((Join-Path $SkillDir '_meta.json'), ($lm | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
-                $lp = [long]$lm.publishedAt
                 $chosenDirection = 'upload'
             } elseif ($dir -eq 'pull') {
-                $rp = $lp + 1
                 $chosenDirection = 'pull'
             } else {
                 Write-SyncStatus 'result' '已取消同步，未做任何更改。' @{ action = 'cancelled' }
                 return
-            }
             }
         }
         if ($chosenDirection -eq 'pull') {

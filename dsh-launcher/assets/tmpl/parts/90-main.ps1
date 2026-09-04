@@ -1,4 +1,4 @@
-# ---------- 启动/附着服务 ----------
+﻿# ---------- 启动/附着服务 ----------
 $listener = Get-DshListenerPid
 if ($CheckOnly) {
     # CheckOnly：只探测，不启动服务、不产生孤儿进程
@@ -363,16 +363,16 @@ $miGit.Add_Click({
     try {
         if ($script:gitMode) {
             # 双向同步：确认后执行（非冲突场景）
-            $r = [System.Windows.Forms.MessageBox]::Show('确定执行双向同步吗？（将对比 GitHub 与本机启动器，按版本号/时间戳判定方向）', 'DSH 同步', [System.Windows.Forms.MessageBoxButtons]::OKCancel, [System.Windows.Forms.MessageBoxIcon]::Question)
+            $r = [System.Windows.Forms.MessageBox]::Show('确定执行双向同步吗？（将对比 GitHub 与本机；系统只给方向建议，绝不自动执行，方向由你选择）', 'DSH 同步', [System.Windows.Forms.MessageBoxButtons]::OKCancel, [System.Windows.Forms.MessageBoxIcon]::Question)
             if ($r -eq [System.Windows.Forms.DialogResult]::OK) {
                 __MODE_SYNC_CALL__
             }
         } elseif ($script:pendingUpdate) {
-            # 待更新：直接更新本地（拉取 GitHub 版本并应用）
+            # 待更新：不再自动更新——转交同步引擎弹窗给建议，方向由用户选择
             $notify.ShowBalloonTip(2000, 'DSH', '正在从 GitHub 更新启动器…', 'Info')
             $syncScript = Join-Path $PSScriptRoot 'dsh-sync.ps1'
             if (Test-Path -LiteralPath $syncScript) {
-                Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$syncScript,'-Mode','__MODE_SYNC_MODE__','-InstallDir',$PSScriptRoot,'-Direction','pull' -WindowStyle Hidden
+                Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$syncScript,'-Mode','__MODE_SYNC_MODE__','-InstallDir',$PSScriptRoot,'-Direction','auto' -WindowStyle Hidden
             }
         } else {
             # 无需更新：状态刷新（查询中…，显示时间 ≥1s）
