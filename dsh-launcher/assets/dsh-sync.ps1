@@ -297,6 +297,32 @@ function Get-CurrentDshVersion {
 }
 
 # ---------- 方向确认弹窗（独立运行时使用） ----------
+function Get-ContentDiffAnalysis {
+    # 真实文件 diff 分析：逐文件对比 本地修改时间 vs GitHub 该文件最近提交时间（只用于给建议）
+    param([string]$SkillDir, [string]$RemoteBase, [string]$GhCache, [string[]]$DiffFiles)
+    $localNewer = 0; $remoteNewer = 0
+    $samples = @()
+    foreach ($k in $DiffFiles) {
+        $samples += (($k -replace '^.*?([^/]+)$', '$1'))
+        $rf = Join-Path $RemoteBase ($k -replace '/', '\')
+        $rt = [datetime]::MinValue
+        if (Test-Path -LiteralPath $rf) {
+            $cl = (Invoke-SyncGit @('log', '-1', '--format=%ct', '--', $k) $GhCache).text
+            if ($cl -match '\d+') { $ct = [long]$Matches[0]; if ($ct -gt 0) { $rt = [datetimeoffset]::FromUnixTimeSeconds($ct).UtcDateTime } }
+        }
+        $lf = Join-Path $SkillDir ($k -replace '/', '\')
+        $lt = if (Test-Path -LiteralPath $lf) { (Get-Item -LiteralPath $lf).LastWriteTimeUtc } else { [datetime]::MinValue }
+        if ($lt -gt $rt) { $localNewer++ } elseif ($rt -gt $lt) { $remoteNewer++ }
+    }
+    $sug = 'mixed'
+    if ($localNewer -gt 0 -and $remoteNewer -eq 0) { $sug = 'upload' }
+    elseif ($remoteNewer -gt 0 -and $localNewer -eq 0) { $sug = 'pull' }
+    $cnt = @($DiffFiles).Count
+    $sample = (($samples | Select-Object -First 5) -join '、')
+    if ($cnt -gt 5) { $sample += ' 等' }
+    return @{ count = $cnt; localNewer = $localNewer; remoteNewer = $remoteNewer; suggest = $sug; sample = $sample }
+}
+
 function Show-SyncDirectionDialog([string]$text) {
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
     Add-Type -AssemblyName System.Drawing -ErrorAction Stop
@@ -421,15 +447,32 @@ function Sync-LauncherScript {
                 Write-SyncStatus 'result' '启动脚本与 GitHub 完全一致，无需同步。' @{ action = 'none' }
                 return
             }
-            # 组织建议文本
-            $sug = ''
-            if ($mainDir -and $compDir) {
-                if ($mainDir -ne $compDir -or $compDir -eq 'mixed') { $sug = '主启动器方向（' + $mainDir + '）与配套技能方向（' + $compDir + '）不一致，需人工判断' }
-                else { $sug = '建议方向：' + $mainDir }
-            } elseif ($mainDir) { $sug = '建议方向：' + $mainDir + '（本机 v' + $lm.version + ' vs GitHub v' + $rm.version + '）' }
-            elseif ($compDir) { $sug = '配套技能建议方向：' + $compDir }
-            if (-not $sug) { $sug = '版本一致但有内容差异（' + @($diff).Count + ' 个文件），无法自动建议，需人工判断' }
-            $dlg = '同步方向选择（系统只给建议，绝不自动判定方向）：' + "`n`n" + $sug + "`n`n请选择：上传到 GitHub / 拉取 GitHub 版本 / 取消（上传会提交到 GitHub，git 历史会保留旧版本）"
+            # 组织建议文本（含真实文件 diff 分析；建议措辞与按钮一致）
+            $rec = ''
+            $signals = @()
+            if ($mainDir) {
+                $mainLabel = if ($mainDir -eq 'upload') { '上传到 GitHub' } else { '拉取 GitHub 版本' }
+                $signals += ('主启动器（版本/时间戳）：本机 v' + $lm.version + ' vs GitHub v' + $rm.version + ' → 建议 ' + $mainLabel)
+            }
+            if ($compDir) { $signals += ('配套技能：本机与 GitHub 内嵌包方向=' + $compDir) }
+            $cf = $null
+            if (@($diff).Count -gt 0) { $cf = Get-ContentDiffAnalysis $SkillDir $remoteBase $ghCache $diff }
+            if ($cf) {
+                $signals += ('内容 diff：' + $cf.count + ' 个文件（' + $cf.sample + '）；本机较新 ' + $cf.localNewer + '，GitHub 较新 ' + $cf.remoteNewer)
+            }
+            if ($mainDir) { $rec = if ($mainDir -eq 'upload') { '上传到 GitHub' } else { '拉取 GitHub 版本' } }
+            elseif ($compDir -and $compDir -ne 'mixed') { $rec = if ($compDir -eq 'upload') { '上传到 GitHub' } else { '拉取 GitHub 版本' } }
+            elseif ($compDir) { $rec = '（配套技能双向更新，需人工判断）' }
+            elseif ($cf) {
+                if ($cf.suggest -eq 'upload') { $rec = '上传到 GitHub' }
+                elseif ($cf.suggest -eq 'pull') { $rec = '拉取 GitHub 版本' }
+                else { $rec = '（双向均有更新，需人工判断）' }
+            } else { $rec = '（未检测到明确差异，需人工判断）' }
+            $dlg = '同步方向选择（系统只给建议，绝不自动判定方向）：'
+            foreach ($sg in $signals) { $dlg += "`n- " + $sg }
+            $dlg += "`n`n建议选择：" + $rec
+            $dlg += '。请点选要执行的方向（与按钮一致）：上传到 GitHub / 拉取 GitHub 版本 / 取消（上传会提交到 GitHub，git 历史会保留旧版本）'
+
             $dir = Show-SyncDirectionDialog $dlg
             if ($dir -eq 'upload') {
                 $chosenDirection = 'upload'
