@@ -28,11 +28,11 @@ description: >
    ```
 
    脚本会自动探测本机 DSH、生成适配脚本、默认建桌面快捷方式。
-3. **配套技能自动安装**：本技能 `assets\配套技能\` 内打包了四个配套技能
-   （`zip-archive-ops` / `batch-files` / `charset-pitfalls` / `skill-install-ops`
-   的 `__skillhub.zip`），
-   setup.ps1 安装时会自动把它们装进 `~/.agents/skills\`（已装且包内不更新则跳过）。
-   **只需分发 `dsh-launcher__skillhub.zip` 一个包即可带全五个技能**。
+3. **配套技能自动安装**：`assets\配套技能\` 目录内所有 `*__skillhub.zip` 即配套技能
+   （**目录即事实源**：setup.ps1 与同步引擎均扫描该目录，增删配套只需放/删 zip，
+   无需改任何清单），setup.ps1 安装时会自动把它们装进 `~/.agents/skills\`
+   （已装且包内不更新则跳过）。
+   **只需分发 `dsh-launcher__skillhub.zip` 一个包即可带全配套技能**。
    配套技能内容变更后，需把新 zip 同步进 `assets\配套技能\` 再分发。
 
 ### 方式 B：作为绿色软件使用（无 AI 时，纯复制）
@@ -306,6 +306,11 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.86 | 0.1.0-rc.7、0.1.1-rc.2 | 配套清单归一为「目录即事实源」（2026-09-05）：dsh-sync.ps1 清单由硬编码改为扫描 `assets\配套技能\` 目录内全部 `*__skillhub.zip`，与 setup.ps1 安装同源——增删配套只需放/删 zip，引擎零改动；配套描述/注释不再逐名列举 |
+| dsh-launcher（一键启动本体） | 1.1.85 | 0.1.0-rc.7、0.1.1-rc.2 | 配套模型补齐（2026-09-05）：dsh-sync.ps1 的 `$script:CompanionSkills` 由 4 项扩为 6 项（纳入 pdf-parse-v3 / std-official-search），releases 发布循环与 Add 源树同步改引用统一清单——修复「两技能从不发布 releases 归档 / Add 源树」的遗漏；配套清单三处（引擎/文档/setup.ps1 注释）同步为 6 项 |
+| dsh-launcher（一键启动本体） | 1.1.84 | 0.1.0-rc.7、0.1.1-rc.2 | 同步方向建议=真实文件 diff 分析+措辞与按钮一致（上传到 GitHub/拉取 GitHub 版本/取消）；第四行待更新同样经引擎弹窗，方向永不自动判定 |
+| dsh-launcher（一键启动本体） | 1.1.83 | 0.1.0-rc.7、0.1.1-rc.2 | SKILL L92 同步规则表述修正（永不自动判定；主包+全部配套）；发布 v1.1.83 |
+| dsh-launcher（一键启动本体） | 1.1.82 | 0.1.0-rc.7、0.1.1-rc.2 | 同步方向永不自动判定——只给建议，方向由用户选择（第四行待更新/双向同步均经引擎弹窗） |
 | dsh-launcher（一键启动本体） | 1.1.81 | 0.1.0-rc.7、0.1.1-rc.2 | 同步纳入配套目录比对：配套技能版本变化自动检测推送（无需手动 bump 主包时间戳）；上传时自动刷新主树内嵌配套 zip、同步仓库 `dsh-launcher Add\` 配套源树 |
 | dsh-launcher（一键启动本体） | 1.1.80 | 0.1.0-rc.7、0.1.1-rc.2 | 「切换同步分支」对话框新增「获取已有分支」按钮：点击后 git ls-remote --heads 动态拉取 GitHub 现有分支，去重后追加到下拉列表（与固定候选并存，不覆盖）；git 自动探测常见安装路径/GitHub Desktop/PATH 兜底，直连↔系统代理双路回退（读注册表 ProxyServer），失败弹窗给出可操作提示；按钮获取中变灰显示「获取中…」 |
 | dsh-launcher（一键启动本体） | 1.1.79 | 0.1.0-rc.7、0.1.1-rc.2 | 同步 repo/branch/候选分支收敛为单一来源 `assets\sync-defaults.json`（改一处全局生效）：dsh-sync.ps1 / configure-git-credentials.vbs / mode-*.json 的分支值改为占位符 `__GH_REPO__` / `__GH_BRANCH__` / `__GH_BRANCHES__`，setup.ps1 渲染时从 sync-defaults.json 注入（dsh-sync.ps1 与 vbs 由 Copy-Item 改为渲染写）；托盘右键菜单新增「切换同步分支」项（下拉候选来自 sync-defaults.json 的 branches + 手动输入，选择后写 `~\.dsh\gh-sync\config.json` 的 branch 并重启托盘生效）；同步目标改 main 主分支 |
@@ -359,9 +364,12 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 ### 配套技能清单与维护（必须同步，缺一不可）
 
-本技能是**主安装包**，`assets\配套技能\` 内置配套脚本技能，setup.ps1 安装时会自动
-安装它们。当前配套清单：`zip-archive-ops` / `batch-files` / `charset-pitfalls` /
-`skill-install-ops`（安装运维规范，自带版本号与自动进化机制，见其 SKILL.md）。
+本技能是**主安装包**，`assets\配套技能\` 目录内全部 `*__skillhub.zip` 即配套技能
+（**目录即事实源**，2026-09-05 归一）：setup.ps1 安装与 dsh-sync.ps1 同步引擎
+（比对/刷新内嵌/Add 源树/发布 releases）**统一扫描该目录**推导清单，不再有任何散落的
+硬编码名单——新增/移除配套只需放/删 zip，引擎零改动。
+（历史教训：曾硬编码 4 项遗漏 pdf-parse-v3 / std-official-search，导致其 releases
+归档与 Add 源树从不发布；故归一为目录扫描。）
 
 **每次修改任一配套技能，三连同步**：
 1. 打包 `xxx__skillhub.zip`（根目录=技能名）同步到 GitHub 仓库
@@ -375,9 +383,9 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 1. 建好技能（SKILL.md + _meta.json，编码/结构遵守 charset-pitfalls 技能）；
 2. 打包 `xxx__skillhub.zip`（根目录=技能名），归档到 GitHub `releases\<当前版本>\`，
    并把源树放进 `dsh-launcher Add\<技能名>\`；
-3. 把该 zip 复制进 `dsh-launcher\assets\配套技能\`（setup.ps1 自动扫描该目录下所有
-   `*__skillhub.zip`，无需改 setup.ps1）；
-4. 重打包并同步 `dsh-launcher__skillhub.zip`（`releases\<当前版本>\`），并把新技能名登记进本清单。
+3. 把该 zip 复制进 `dsh-launcher\assets\配套技能\`（**目录即事实源**：setup.ps1 与
+   同步引擎自动扫描该目录下所有 `*__skillhub.zip`，无需改引擎/清单）；
+4. 重打包并同步 `dsh-launcher__skillhub.zip`（`releases\<当前版本>\`）。
 
 **与 launcher 无关的技能**：zip 不进入本仓库的 releases 配套归档，独立管理。
 
@@ -385,6 +393,6 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 launcher 配套，**最终由用户定义**。AI 只能做预判断（一键启动相关通用运维技能 vs
 个性化生产力技能），**判断后必须先征得用户同意，才能执行配套/独立的归档操作**
 （进 `assets\配套技能\`、进 `dsh-launcher Add\`、进主包内嵌，或仅放根目录）。
-未经用户确认，AI 不得自行决定技能归属并执行归档。当前配套
-（`zip-archive-ops` / `batch-files` / `charset-pitfalls` / `skill-install-ops`）
-是已获用户认可的历史决定；`cad-scan-eye` 扫描之眼已明确为根目录独立能力。
+未经用户确认，AI 不得自行决定技能归属并执行归档。当前 `assets\配套技能\` 目录内的配套
+是已获用户认可的历史决定（**目录即事实源**，增删由用户拍板后放/删 zip 即生效）；
+`cad-scan-eye` 扫描之眼已明确为根目录独立能力。

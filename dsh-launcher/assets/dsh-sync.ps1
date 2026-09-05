@@ -155,7 +155,9 @@ function Get-SyncFileHash {
     try { return (Get-FileHash -InputStream $ms -Algorithm SHA256).Hash } finally { $ms.Dispose() }
 }
 # ---------- 配套技能同步（1.1.81+：配套目录纳入比对，版本变化自动检测推送） ----------
-$script:CompanionSkills = @('zip-archive-ops','batch-files','charset-pitfalls','skill-install-ops')
+# 配套清单 = assets\配套技能\ 目录即事实源（2026-09-05 归一）：扫描目录内全部
+# *__skillhub.zip 推导 slug，与 setup.ps1 安装同源——增删配套只需放/删 zip，引擎零改动。
+$script:CompanionSkills = @(Get-ChildItem -LiteralPath (Join-Path $SkillDir 'assets\配套技能') -Filter '*__skillhub.zip' -File -ErrorAction SilentlyContinue | ForEach-Object { $_.BaseName -replace '__skillhub$','' } | Sort-Object -Unique)
 function Read-MetaObject {
     param([string]$MetaFile)
     if (-not (Test-Path -LiteralPath $MetaFile)) { return $null }
@@ -565,7 +567,7 @@ function Sync-LauncherScript {
             New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
             $published = @()
             if (Publish-SkillZip $SkillDir (Join-Path $releaseDir 'dsh-launcher__skillhub.zip') 'dsh-launcher') { $published += 'dsh-launcher' }
-            foreach ($c in @('zip-archive-ops','batch-files','charset-pitfalls','skill-install-ops')) {
+            foreach ($c in $script:CompanionSkills) {
                 $cd = Join-Path $env:USERPROFILE (".agents\skills\$c")
                 $out = Join-Path $releaseDir ($c + '__skillhub.zip')
                 if (-not (Publish-SkillZip $cd $out $c)) {

@@ -289,10 +289,10 @@ if (Test-Path -LiteralPath $patchEngine) {
     Write-Host '（未找到补丁引擎 assets\补丁管理\补丁引擎-应用还原检查.ps1，跳过补丁步骤）' -ForegroundColor DarkGray
 }
 
-# ---------- 配套技能自动安装（zip-archive-ops / batch-files / charset-pitfalls） ----------
+# ---------- 配套技能自动安装（目录即事实源：扫描 assets\配套技能\ 内全部 *__skillhub.zip） ----------
 $companionDir = Join-Path $scriptDir '配套技能'
 if (Test-Path -LiteralPath $companionDir) {
-    Step '安装配套技能（zip-archive-ops / batch-files / charset-pitfalls / skill-install-ops）...'
+    Step '安装配套技能（assets\配套技能\ 目录内全部 __skillhub.zip）...'
     try { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop } catch {}
     $skillsRoot = Join-Path $env:USERPROFILE '.agents\skills'
     New-Item -ItemType Directory -Force -Path $skillsRoot | Out-Null
