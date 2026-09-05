@@ -322,6 +322,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.88 | 0.1.0-rc.7、0.1.1-rc.2 | 新增配套技能 adversarial-review（对抗性审查与沉淀迭代 v0.1.0，2026-09-06）：打包 adversarial-review__skillhub.zip 纳入 assets\配套技能\（目录即事实源），随启动器分发、setup.ps1 自动装到各机 ~/.agents/skills；配套数 6 → 7 |
 | dsh-launcher（一键启动本体） | 1.1.87 | 0.1.0-rc.7、0.1.1-rc.2 | 多机分发健壮性（2026-09-05）：① setup.ps1 Find-Node 通用化：探测顺序改为 PATH → 官方/nvm 通用目录（Program Files\nodejs、%LOCALAPPDATA%\Programs\nodejs、NVM_HOME/NVM_SYMLINK）→ 宿主私有运行时→ node.cmd；② 托盘 Web 看护达重启上限时自动重跑 setup.ps1 自愈（30 分钟熔断防循环），仍失败才禁用+人工提示；③ 无 node 时明确指引安装 Node.js（setup 与托盘失败提示均补入 https://nodejs.org） ；含抗对审查修复（M1）helper 均 UTF-8 BOM+路径单引号转义（中文用户名机器）；M2 setup 路径渲染期注入 __SETUP_PS1__ + Test-Path 前置；M3 熔断 fail-closed；M4 Find-Node 可运行性/版本门槛（≥22.19）+排除 kimi-work；另修 re-arm 死代码、挂死进程清理、菜单名统一。 |
 | dsh-launcher（一键启动本体） | 1.1.86 | 0.1.0-rc.7、0.1.1-rc.2 | 配套清单归一为「目录即事实源」（2026-09-05）：dsh-sync.ps1 清单由硬编码改为扫描 `assets\配套技能\` 目录内全部 `*__skillhub.zip`，与 setup.ps1 安装同源——增删配套只需放/删 zip，引擎零改动；配套描述/注释不再逐名列举 |
 | dsh-launcher（一键启动本体） | 1.1.85 | 0.1.0-rc.7、0.1.1-rc.2 | 配套模型补齐（2026-09-05）：dsh-sync.ps1 的 `$script:CompanionSkills` 由 4 项扩为 6 项（纳入 pdf-parse-v3 / std-official-search），releases 发布循环与 Add 源树同步改引用统一清单——修复「两技能从不发布 releases 归档 / Add 源树」的遗漏；配套清单三处（引擎/文档/setup.ps1 注释）同步为 6 项 |
