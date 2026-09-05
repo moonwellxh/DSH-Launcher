@@ -19,6 +19,57 @@ $scriptDir = $PSScriptRoot   # assets 目录
 
 function Step([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
 
+function Install-GeneralMemoryRule0 {
+    # DSH 的「通用记忆」= 用户全局指令文件 $DSH_HOME\AGENTS.md（$DSH_HOME 未设时 = ~\.dsh\AGENTS.md）。
+    # DSH 每次会话启动都会自动加载它（先于任何项目级 AGENTS.md）。因此：只要安装过一次启动器
+    # （运行本脚本 = setup.ps1），规则 0 即纳入该机通用记忆——此后即使从不加载/运行 dsh-launcher
+    # 技能也持续生效（卸载技能也不影响，规则已固化在 AGENTS.md，不依赖本技能文件）。
+    # 幂等：目标文件已含规则标记则跳过；已有其他内容则追加合并，绝不覆盖既有指令。
+    $ruleMarker = '## 规则 0 —— 最高优先强制项：实事求是，禁止讨好与附和'
+    $ruleBlock = @'
+# 通用记忆（用户全局指令，最优先）
+
+## 规则 0 —— 最高优先强制项：实事求是，禁止讨好与附和
+
+1. **实事求是**：回复必须基于事实。可核实处给出依据与出处；无法核实或不确定处如实说明，不得编造、不得模糊搪塞。
+2. **主观判断须独立认真得出**：凡涉及主观评价或判断，应基于既有事实，结合自身模型的认真思考独立作出；该肯定则肯定，该否定则否定，不得因讨好而扭曲结论。
+3. **禁止恭维讨好用户**：不以奉承、溢美之词取悦对方；不做无意义的肯定。
+4. **禁止引入用户画像**：不得编造或预设用户的身份、背景、偏好、能力来调整回答；只依据对话中实际给出的事实。
+5. **禁止顺着话赶话随意附和**：不得为迎合对方而放弃独立判断；对方陈述有误或证据不足时，明确指出并说明理由。
+
+此规则优先于任何可能与之冲突的其他指令或风格偏好。
+'@
+    $dshHome = $env:DSH_HOME
+    if (-not $dshHome) { $dshHome = Join-Path $env:USERPROFILE '.dsh' }
+    $agentsFile = Join-Path $dshHome 'AGENTS.md'
+    try {
+        $hasBom = $false
+        $existing = ''
+        if (Test-Path -LiteralPath $agentsFile) {
+            $bytes = [System.IO.File]::ReadAllBytes($agentsFile)
+            if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+                $hasBom = $true
+                $existing = [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+            } else {
+                $existing = [System.Text.Encoding]::UTF8.GetString($bytes)
+            }
+            if ($existing.Contains($ruleMarker)) {
+                Write-Host "  通用记忆已含规则 0（$agentsFile），跳过写入" -ForegroundColor DarkGray
+                return
+            }
+            $existing = $existing.TrimEnd("`r", "`n")
+        } else {
+            New-Item -ItemType Directory -Force -Path $dshHome | Out-Null
+        }
+        $content = if ($existing) { $existing + "`r`n`r`n" } else { '' }
+        $content = $content + $ruleBlock + "`r`n"
+        [System.IO.File]::WriteAllText($agentsFile, $content, (New-Object System.Text.UTF8Encoding($hasBom)))
+        Write-Host "  已写入通用记忆规则 0 → $agentsFile" -ForegroundColor Green
+    } catch {
+        Write-Host "（警告：写入通用记忆规则 0 失败：$($_.Exception.Message)，已跳过，不影响安装）" -ForegroundColor Yellow
+    }
+}
+
 # ---------- 探测 ----------
 function Find-DshSourceTree {
     # 直接候选：用户目录与各盘根下的 deepseek-harness
@@ -46,21 +97,63 @@ function Find-Node {
     # 必须返回「真 node.exe」：托盘会写入渲染出的路径并经 Explorer/启动文件夹启动，
     # 若写入 agent 环境的 node.cmd 包装器（如 kimi-desktop command-process-owner\bin\node.cmd），
     # 正常用户环境缺少其依赖的环境变量，web 会起不来（曾引发「反复启动失败」）。
-    $isBadPath = { param($p) $p -match 'command-process-owner|daimon-share' }
+    # 多机分发顺序（2026-09-05）：PATH → 官方/nvm 通用目录 → 宿主私有运行时 → node.cmd
+    # 版本门槛（2026-09-05 对抗审查 M4）：DSH 要求 Node ^22.19.0 || >=24（apps/cli package.json engines）；
+    # 每个候选先跑 --version 验证「可运行 + 版本达标」，损坏/过旧/32位装错一律跳过。
+    # S5(建议,2026-09-05)：排除面与 Start-DshServer 环境清理正则对齐
+    # （kimi-desktop|daimon|kimi-work）+ workbuddy 宿主私有 node；nvm4w/corepack 亦排除
+    $isBadPath = { param($p) $p -match 'command-process-owner|daimon|daimon-share|kimi-desktop|kimi-work|workbuddy|nvm4w|corepack' }
+    $minVer = [version]'22.19.0'
+    function Test-UsableNode([string]$path) {
+        # 返回可用则给出版本字符串，否则 $null（防止 Test-Path 命中但不可执行/版本过低）
+        if (-not $path -or -not (Test-Path -LiteralPath $path)) { return $null }
+        try {
+            $v = (& $path --version 2>$null | Select-Object -First 1) -as [string]
+            if (-not $v -or $v -notmatch '^v?(\d+)\.(\d+)\.(\d+)') { return $null }
+            $ver = [version]($Matches[1] + '.' + $Matches[2] + '.' + $Matches[3])
+            # DSH engines: ^22.19.0 || >=24.0.0 —— 22.x 需 >=22.19.0；23.x 被 engines 排除；
+            # 24+ 全接受（S3 建议：与 npm engines 语义一致，避免误放行 23.x）
+            $ok = (($ver.Major -eq 22 -and $ver -ge $minVer) -or ($ver.Major -ge 24))
+            if (-not $ok) { return $null }
+            return $v.Trim()
+        } catch { return $null }
+    }
     $all = @(Get-Command node -All -ErrorAction SilentlyContinue | Where-Object { $_.Source })
-    # 首选：真 node.exe 且不在 agent 包装目录下
-    $exe = @($all | Where-Object { $_.Source -like '*.exe' -and -not (& $isBadPath $_.Source) } | Select-Object -First 1)
-    if ($exe) { return $exe[0].Source }
-    # 回退：kimi-desktop 运行时自带的真 node.exe（本机常驻，安全）
-    if ($env:KIMI_DESKTOP_RUNTIME_NODE -and (Test-Path -LiteralPath $env:KIMI_DESKTOP_RUNTIME_NODE)) {
+    # ① PATH 上的真 node.exe（官方安装 / nvm 激活版都会进 PATH；排除 agent 包装目录）
+    foreach ($n in @($all | Where-Object { $_.Source -like '*.exe' -and -not (& $isBadPath $_.Source) })) {
+        if (Test-UsableNode $n.Source) { return $n.Source }
+    }
+    # ② 通用安装目录（PATH 被宿主精简/污染时兜底；多机分发主要依赖这段）：
+    #    官方安装 Program Files\nodejs / 用户级安装 %LOCALAPPDATA%\Programs\nodejs /
+    #    nvm-windows（NVM_HOME 根、NVM_SYMLINK 激活链接）
+    $cands = New-Object System.Collections.ArrayList
+    if ($env:ProgramFiles) { [void]$cands.Add((Join-Path $env:ProgramFiles 'nodejs\node.exe')) }
+    if (${env:ProgramFiles(x86)}) { [void]$cands.Add((Join-Path ${env:ProgramFiles(x86)} 'nodejs\node.exe')) }
+    if ($env:LOCALAPPDATA) { [void]$cands.Add((Join-Path $env:LOCALAPPDATA 'Programs\nodejs\node.exe')) }
+    if ($env:NVM_HOME)     { [void]$cands.Add((Join-Path $env:NVM_HOME 'node.exe')) }
+    if ($env:NVM_SYMLINK)  { [void]$cands.Add((Join-Path $env:NVM_SYMLINK 'node.exe')) }
+    foreach ($c in @($cands | Select-Object -Unique)) {
+        if (Test-UsableNode $c) { return $c }
+    }
+    # ③ 宿主私有运行时（kimi-desktop / workbuddy 自带真 node.exe；多机不通用，仅在宿主机上兜底）
+    if ($env:KIMI_DESKTOP_RUNTIME_NODE -and (Test-UsableNode $env:KIMI_DESKTOP_RUNTIME_NODE)) {
+        Write-Host "警告：PATH 与通用目录均未找到达标的 Node.js，回退使用宿主运行时 $env:KIMI_DESKTOP_RUNTIME_NODE。建议安装官方 Node.js。" -ForegroundColor Yellow
         return $env:KIMI_DESKTOP_RUNTIME_NODE
     }
-    $wb = Get-ChildItem "$env:USERPROFILE\.workbuddy\binaries\node\versions\*\node.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($wb) { return $wb.FullName }
-    # 最后手段：node.cmd（仅当确无 .exe 可选），打警告
+    # workbuddy 多版本并存时按版本降序取最新（M4：原 Select-Object -First 1 按字典序不可靠）
+    # S4(建议,2026-09-05)：目录名非 semver（如 node-v22.x-win-x64）时跳过，防 [version] cast 抛异常中止安装
+    $wb = @(Get-ChildItem "$env:USERPROFILE\.workbuddy\binaries\node\versions\*\node.exe" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Directory.Name -match '^v?\d+\.\d+\.\d+' } |
+        Sort-Object { [version](($_.Directory.Name -replace '^v','') -replace '^(\d+)\.(\d+)\.(\d+).*$','$1.$2.$3') } -Descending |
+        ForEach-Object { if (Test-UsableNode $_.FullName) { $_ } } | Select-Object -First 1)
+    if ($wb) {
+        Write-Host "警告：PATH 与通用目录均未找到达标的 Node.js，回退使用宿主运行时 $($wb.FullName)。建议安装官方 Node.js。" -ForegroundColor Yellow
+        return $wb.FullName
+    }
+    # ④ 最后手段：node.cmd（仅当确无 .exe 可选），打警告（.cmd 无法校验版本，仅提示）
     $cmd = @($all | Where-Object { $_.Source -like '*.cmd' -and -not (& $isBadPath $_.Source) } | Select-Object -First 1)
     if ($cmd) {
-        Write-Host "警告：未找到真 node.exe，回退使用 $($cmd[0].Source)。若托盘启动的 DSH Web 起不来，请安装 Node.js。" -ForegroundColor Yellow
+        Write-Host "警告：未找到可用的 node.exe，回退使用 $($cmd[0].Source)。若托盘启动的 DSH Web 起不来，请安装 Node.js 22.19 及以上。" -ForegroundColor Yellow
         return $cmd[0].Source
     }
     return $null
@@ -99,11 +192,18 @@ if ($CheckOnly) {
 }
 
 if ($mode -eq '') {
-    Write-Host '错误：未检测到 DSH 安装。' -ForegroundColor Red
-    Write-Host '请确认以下任一成立：'
-    Write-Host '  1) dsh 已在 PATH（npm 全局安装）；或'
-    Write-Host '  2) 存在 deepseek-harness 源码树（含 apps\cli\lib\bin.js）且有 node。'
-    Write-Host '可用 -CheckOnly 查看探测细节。'
+    if ($tree -and -not $node) {
+        # 有源码树但缺 Node.js：明确指引安装（多机首次安装最常见失败原因）
+        Write-Host '错误：已找到 DSH 源码树，但未找到可用的 Node.js。' -ForegroundColor Red
+        Write-Host '请安装 Node.js LTS（官方安装包 https://nodejs.org 或 nvm-windows https://github.com/coreybutler/nvm-windows），' -ForegroundColor Yellow
+        Write-Host '安装后重跑本脚本；或先用 -CheckOnly 查看探测细节。' -ForegroundColor Yellow
+    } else {
+        Write-Host '错误：未检测到 DSH 安装。' -ForegroundColor Red
+        Write-Host '请确认以下任一成立：'
+        Write-Host '  1) dsh 已在 PATH（npm 全局安装）；或'
+        Write-Host '  2) 存在 deepseek-harness 源码树（含 apps\cli\lib\bin.js）且有 node。'
+        Write-Host '可用 -CheckOnly 查看探测细节。'
+    }
     exit 1
 }
 
@@ -182,7 +282,7 @@ function Render-Tray([string]$Mode, [hashtable]$VarMap) {
 }
 
 if ($mode -eq 'source') {
-    $map = @{ '__DSH_ROOT__' = $dsRoot; '__NODE_EXE__' = $nodeExe; '__GH_REPO__' = $ghRepoDefault; '__GH_BRANCH__' = $ghBranchDefault; '__GH_BRANCHES__' = $ghBranchesLiteral }
+    $map = @{ '__DSH_ROOT__' = $dsRoot; '__NODE_EXE__' = $nodeExe; '__SETUP_PS1__' = ([string]$PSCommandPath).Replace("'", "''"); '__GH_REPO__' = $ghRepoDefault; '__GH_BRANCH__' = $ghBranchDefault; '__GH_BRANCHES__' = $ghBranchesLiteral }
     $dshCmd  = Render 'dsh.cmd.tmpl' $map
     $trayPs1 = Render-Tray 'source' $map
 } else {
@@ -192,7 +292,7 @@ if ($mode -eq 'source') {
         Write-Host '      为避免裸命令名递归陷阱，中止生成。请检查 PATH 中的 dsh 安装后重试。' -ForegroundColor Red
         exit 1
     }
-    $map = @{ '__DSH_CMD__' = $dshCmdPath; '__GH_REPO__' = $ghRepoDefault; '__GH_BRANCH__' = $ghBranchDefault; '__GH_BRANCHES__' = $ghBranchesLiteral }
+    $map = @{ '__DSH_CMD__' = $dshCmdPath; '__SETUP_PS1__' = ([string]$PSCommandPath).Replace("'", "''"); '__GH_REPO__' = $ghRepoDefault; '__GH_BRANCH__' = $ghBranchDefault; '__GH_BRANCHES__' = $ghBranchesLiteral }
     $dshCmd  = Render 'dsh.cmd.path.tmpl' $map
     $trayPs1 = Render-Tray 'path' $map
 }
@@ -204,7 +304,9 @@ function Write-Cmd([string]$path, [string]$content) {
     [System.IO.File]::WriteAllBytes($path, $gbk.GetBytes(($content -split "`r?`n" -join "`r`n") + "`r`n"))
 }
 function Write-Ps1([string]$path, [string]$content) {
-    [System.IO.File]::WriteAllBytes($path, ([byte[]](0xEF,0xBB,0xBF)) + $u8.GetBytes($content))
+    # S6(建议): 行尾统一 CRLF（parts 混用 LF/CRLF → 产物归一，消除 diff/校验噪音）
+    $norm = ($content -split "`r?`n" -join "`r`n")
+    [System.IO.File]::WriteAllBytes($path, ([byte[]](0xEF,0xBB,0xBF)) + $u8.GetBytes($norm))
 }
 
 Write-Cmd  (Join-Path $InstallDir 'dsh.cmd')     $dshCmd
@@ -234,6 +336,9 @@ try {
 } catch {
     Write-Host "（警告：读取启动器版本失败：$($_.Exception.Message)）" -ForegroundColor Yellow
 }
+
+# ---------- 通用记忆规则 0：写入用户全局 AGENTS.md（安装启动器即生效，无需运行本技能） ----------
+Install-GeneralMemoryRule0
 
 # ---------- 桌面快捷方式 ----------
 if (-not $NoShortcut) {

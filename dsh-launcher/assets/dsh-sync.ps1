@@ -366,12 +366,17 @@ function Restart-DshTray([string]$TrayPath) {
     if (-not (Test-Path -LiteralPath $TrayPath)) { return $false }
     try { $null = [scriptblock]::Create((Get-Content -LiteralPath $TrayPath -Raw -Encoding UTF8)); } catch { return $false }
     $helper = Join-Path $env:TEMP ("dsh-restart-" + [guid]::NewGuid().ToString('N') + '.ps1')
+    # S6/阶段C复审(2026-09-05): helper 内路径用单引号字面量($trayRaw 撇号翻倍) + 运行时 '"'+raw+'"' 构造；
+    # 直启 $helper 也包双引号——防安装目录/TEMP 含空格时 powershell -File exit -196608
+    $trayRaw = $TrayPath.Replace("'", "''")
     @"
 Start-Sleep -Seconds 2
-Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','$TrayPath' -WindowStyle Hidden
+`$trayRaw = '$trayRaw'
+`$trayArg = '"' + `$trayRaw + '"'
+Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',`$trayArg -WindowStyle Hidden
 Remove-Item -LiteralPath `$MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 "@ | Set-Content -LiteralPath $helper -Encoding UTF8
-    Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$helper) -WindowStyle Hidden
+    Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',('"' + $helper + '"')) -WindowStyle Hidden
     return $true
 }
 

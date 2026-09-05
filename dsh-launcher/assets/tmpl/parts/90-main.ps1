@@ -66,24 +66,112 @@ $script:webDownCount = 0
 $script:webRestartCount = 0
 $script:webWatchdogDisabled = $false
 $script:lastWebStart = [datetime]::MinValue
+
+# ---- 自动修复（2026-09-05，多机分发）：连续自动重启仍失败时，先重跑一次 setup.ps1 ----
+# （node 被升级/迁移/卸载后，托盘内写死的路径会失效；重跑 setup 会重新探测并重渲染托盘）
+# 熔断标记放 %TEMP%（始终用户可写）：安装目录可能位于只读位置（如绿色软件解压到 Program Files），
+# 标记写不进去会让熔断失效 → 无限自愈循环。TEMP 跨托盘重启保留，熔断语义不受影响。
+$script:autoRepairMark = Join-Path $env:TEMP 'dsh-tray-autorepair.mark'
+function Test-AutoRepairDue {
+    # 熔断：30 分钟内只允许一次自动修复（防 node 永久缺失时无限自愈循环）
+    if (-not (Test-Path -LiteralPath $script:autoRepairMark)) { return $true }
+    try {
+        $last = [DateTimeOffset]::FromUnixTimeSeconds([long]([System.IO.File]::ReadAllText($script:autoRepairMark)).Trim())
+        return (([datetime]::UtcNow - $last.UtcDateTime).TotalMinutes -ge 30)
+    } catch { return $true }
+}
+function Set-AutoRepairMark {
+    # 返回是否写入成功：失败 = 熔断不可用 → 调用方必须 fail-closed（不自愈，直接禁用）
+    try {
+        [System.IO.File]::WriteAllText($script:autoRepairMark, ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()), (New-Object System.Text.UTF8Encoding($false)))
+        return $true
+    } catch { return $false }
+}
+function Start-TrayAutoRepair {
+    # 独立 helper 进程接力（不能自己杀自己）：杀旧托盘 → 重跑 setup.ps1（重探测 node/DSH）→ 重启托盘
+    # M2: setup 路径渲染期注入（__SETUP_PS1__），不硬编码技能目录 —— 绿色软件手动复制安装也成立
+    $setupPs = '__SETUP_PS1__'
+    if (-not (Test-Path -LiteralPath $setupPs)) {
+        # 找不到 setup.ps1（技能被移动/改名/删除）：不白烧修复额度，直接提示人工
+        $notify.ShowBalloonTip(6000, 'DSH', 'DSH Web 反复启动失败，且找不到自动修复用的安装脚本（setup.ps1）。请确认技能未移动，或重新安装 dsh-launcher 后用托盘「硬重启托盘」。', 'Warning')
+        return
+    }
+    $trayPid     = $PID
+    $trayScript  = $PSCommandPath
+    $helperPath  = Join-Path $env:TEMP ("dsh-autorepair-" + [guid]::NewGuid().ToString('N') + '.ps1')
+    # S6(第三轮实测, 正确形态): helper 内路径以单引号字面量存（撇号 '' 翻倍，托盘展开）；
+    # CLI 参数值由 helper 运行时 '"'+raw+'"' 构造（值含双引号字符→子进程 argv 剥离→兼容空格与撇号）
+    $setupEsc   = $setupPs.Replace("'", "''")
+    $trayEsc    = $trayScript.Replace("'", "''")
+    $installEsc = $PSScriptRoot.Replace("'", "''")
+    $helperEsc  = $helperPath.Replace("'", "''")
+    $helper = @"
+Start-Sleep -Seconds 2
+Stop-Process -Id $trayPid -Force -ErrorAction SilentlyContinue
+`$setupRaw = '$setupEsc'
+`$setupArg = '"' + `$setupRaw + '"'
+`$trayRaw = '$trayEsc'
+`$trayArg = '"' + `$trayRaw + '"'
+`$installRaw = '$installEsc'
+`$installArg = '"' + `$installRaw + '"'
+Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',`$setupArg,'-InstallDir',`$installArg,'-NoShortcut' -Wait -WindowStyle Hidden
+Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',`$trayArg -WindowStyle Hidden
+Remove-Item -LiteralPath '$helperEsc' -Force -ErrorAction SilentlyContinue
+"@
+    try {
+        # M1: helper 必须 UTF-8 带 BOM 写入（PS 5.1 按 BOM 识别编码；无 BOM 会把含中文路径读成乱码）
+        $u8 = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllBytes($helperPath, ([byte[]](0xEF,0xBB,0xBF)) + $u8.GetBytes($helper))
+        Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',('"' + $helperPath + '"') -WindowStyle Hidden
+    } catch { return $false }
+    $notify.Visible = $false
+    try { $notify.Dispose() } catch {}
+    [System.Windows.Forms.Application]::Exit()
+    return $true
+}
 $webTimer = New-Object System.Windows.Forms.Timer
 $webTimer.Interval = 5000
 $webTimer.Add_Tick({
     try {
-        if ($script:webWatchdogDisabled) { return }
         $listener = Get-DshListenerPid
         if ($listener -eq 0) {
+            # 已禁用（连续失败）：仍记录，但不再自动重启/自愈（等待用户手动救活或恢复检测）
+            if ($script:webWatchdogDisabled) { return }
             $script:webDownCount++
             if ($script:webDownCount -ge 3 -and ((Get-Date) - $script:lastWebStart).TotalSeconds -gt 30) {
                 $script:webDownCount = 0
                 $script:lastWebStart = Get-Date
                 $script:webRestartCount++
                 if ($script:webRestartCount -ge 3) {
+                    # 自动修复优先（多机分发）：连续失败多为 node/DSH 路径失效，先重跑一次 setup.ps1 自愈
+                    if (Test-AutoRepairDue) {
+                        # S2(建议): setup 存在性先于写标记——缺失则提示人工 + return，不白烧 30 分钟熔断额度
+                        if (-not (Test-Path -LiteralPath '__SETUP_PS1__')) {
+                            $script:webWatchdogDisabled = $true
+                            $notify.ShowBalloonTip(6000, 'DSH', 'DSH Web 反复启动失败，且找不到自动修复用的安装脚本（setup.ps1）。请确认技能未移动，或重新安装 dsh-launcher 后用托盘「硬重启托盘」。', 'Warning')
+                            return
+                        }
+                        # M3: 先确认熔断标记写入成功才自愈（fail-closed：TEMP 都写不了 → 不自愈循环）
+                        if (-not (Set-AutoRepairMark)) {
+                            $script:webWatchdogDisabled = $true
+                            $notify.ShowBalloonTip(6000, 'DSH', 'DSH Web 反复启动失败，且无法写入自愈标记（TEMP 不可写）。已停止自动重启。请升级 DSH，或用托盘「硬重启托盘」手动启动。', 'Warning')
+                            return
+                        }
+                        $notify.ShowBalloonTip(4000, 'DSH', 'DSH Web 反复启动失败，正在自动重跑安装脚本（重新探测 Node/DSH）并重启托盘…', 'Info')
+                        if ($null -eq (Start-TrayAutoRepair)) { return }
+                        return
+                    }
                     $script:webWatchdogDisabled = $true
-                    $notify.ShowBalloonTip(6000, 'DSH', 'DSH Web 反复启动失败（可能 DSH 版本过旧或安装异常），已停止自动重启。请升级 DSH，或用托盘「重启 DSH」/手动启动。', 'Warning')
+                    $notify.ShowBalloonTip(6000, 'DSH', 'DSH Web 反复启动失败（自动修复后仍未恢复，可能 DSH 版本过旧或 Node.js 未安装）。已停止自动重启。请升级 DSH，或用托盘「硬重启托盘」重新探测后手动启动。', 'Warning')
                     return
                 }
                 $notify.ShowBalloonTip(3000, 'DSH', 'DSH Web 已停止，正在自动重启…', 'Info')
+                # 防挂死进程累积：重启前清理上一 proc（已自然退出则跳过）
+                if ($null -ne $script:proc) {
+                    try { $script:proc.Refresh() } catch {}
+                    if (-not $script:proc.HasExited) { Stop-Process -Id $script:proc.Id -Force -ErrorAction SilentlyContinue }
+                    $script:proc = $null
+                }
                 $script:proc = Start-DshServer
                 if ($null -eq $script:proc) {
                     $notify.ShowBalloonTip(4000, 'DSH', '__MODE_WEB_WATCHDOG_FAIL__', 'Error')
@@ -245,14 +333,20 @@ $miBranch.Add_Click({
         $trayPid = $PID
         $trayScript = $PSCommandPath
         $helperPath = Join-Path $env:TEMP ("dsh-branch-" + [guid]::NewGuid().ToString('N') + '.ps1')
+        # S6(第三轮实测, 正确形态): helper 内单引号字面量 + 运行时 '"'+raw+'"' 构造 CLI 参数
+        $trayEsc   = $trayScript.Replace("'", "''")
+        $helperEsc = $helperPath.Replace("'", "''")
         $helper = @"
 Start-Sleep -Seconds 1
 Stop-Process -Id $trayPid -Force -ErrorAction SilentlyContinue
-Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','$trayScript' -WindowStyle Hidden
-Remove-Item -LiteralPath '$helperPath' -Force -ErrorAction SilentlyContinue
+`$trayRaw = '$trayEsc'
+`$trayArg = '"' + `$trayRaw + '"'
+Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',`$trayArg -WindowStyle Hidden
+Remove-Item -LiteralPath '$helperEsc' -Force -ErrorAction SilentlyContinue
 "@
-        [System.IO.File]::WriteAllText($helperPath, $helper, (New-Object System.Text.UTF8Encoding($false)))
-        Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$helperPath -WindowStyle Hidden
+        $u8b = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllBytes($helperPath, ([byte[]](0xEF,0xBB,0xBF)) + $u8b.GetBytes($helper))
+        Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',('"' + $helperPath + '"') -WindowStyle Hidden
         $notify.Visible = $false; $notify.Dispose()
         [System.Windows.Forms.Application]::Exit()
     } catch { $notify.ShowBalloonTip(3000, 'DSH', "切换分支失败：$($_.Exception.Message)", 'Error') }
@@ -372,7 +466,7 @@ $miGit.Add_Click({
             $notify.ShowBalloonTip(2000, 'DSH', '正在从 GitHub 更新启动器…', 'Info')
             $syncScript = Join-Path $PSScriptRoot 'dsh-sync.ps1'
             if (Test-Path -LiteralPath $syncScript) {
-                Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$syncScript,'-Mode','__MODE_SYNC_MODE__','-InstallDir',$PSScriptRoot,'-Direction','auto' -WindowStyle Hidden
+                Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',('"' + $syncScript + '"'),'-Mode','__MODE_SYNC_MODE__','-InstallDir',('"' + $PSScriptRoot + '"'),'-Direction','auto' -WindowStyle Hidden
             }
         } else {
             # 无需更新：状态刷新（查询中…，显示时间 ≥1s）

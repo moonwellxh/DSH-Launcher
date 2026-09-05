@@ -64,6 +64,22 @@ setup.ps1 -NoShortcut              # 不建桌面快捷方式
 setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 ```
 
+## 安装即写入通用记忆规则 0（2026-09-05 起：只装一次启动器 = 规则永久生效，无需运行本技能）
+
+`setup.ps1` 在安装流程中自动调用 `Install-GeneralMemoryRule0`，把「通用记忆规则 0」
+（实事求是 / 独立认真判断 / 禁止讨好、用户画像与附和；正文见 setup.ps1 内实现）幂等
+写入 DSH 用户全局指令文件 `$DSH_HOME\AGENTS.md`（`$DSH_HOME` 未设时 = `~\.dsh\AGENTS.md`）：
+
+- **只装一次 = 永久生效**：只要跑过一次 setup.ps1（含 `就地安装.bat` / `更新安装.cmd`
+  触发），规则 0 即进入该机通用记忆；DSH 每次会话自动加载 AGENTS.md（先于任何项目级
+  AGENTS.md），因此**不加载、不运行本技能也持续生效**；以后卸载本技能同样不影响
+  （规则已固化在 AGENTS.md，不依赖本技能文件）。
+- **幂等合并**：目标文件已含规则标记 → 跳过；已有用户其他内容 → 在其后追加合并，
+  绝不覆盖既有指令；重复运行 setup.ps1 不产生重复条目。
+- **更新规则正文**：改 `assets\setup.ps1` 内 `Install-GeneralMemoryRule0` 的规则文本后，
+  对已写入过的机器需删除 AGENTS.md 中旧规则块再重跑 setup.ps1（或手工同步 AGENTS.md）。
+- **本机两处同源**：本技能内嵌的规则文本与已写入的 AGENTS.md 内容一致，以本技能为准。
+
 ## 探测逻辑（AI 需知）
 
 > **边界声明（必读）**：`setup.ps1` 是**启动器生成器，不是 DSH 安装器**。它从不安装、
@@ -306,6 +322,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.87 | 0.1.0-rc.7、0.1.1-rc.2 | 多机分发健壮性（2026-09-05）：① setup.ps1 Find-Node 通用化：探测顺序改为 PATH → 官方/nvm 通用目录（Program Files\nodejs、%LOCALAPPDATA%\Programs\nodejs、NVM_HOME/NVM_SYMLINK）→ 宿主私有运行时→ node.cmd；② 托盘 Web 看护达重启上限时自动重跑 setup.ps1 自愈（30 分钟熔断防循环），仍失败才禁用+人工提示；③ 无 node 时明确指引安装 Node.js（setup 与托盘失败提示均补入 https://nodejs.org） ；含抗对审查修复（M1）helper 均 UTF-8 BOM+路径单引号转义（中文用户名机器）；M2 setup 路径渲染期注入 __SETUP_PS1__ + Test-Path 前置；M3 熔断 fail-closed；M4 Find-Node 可运行性/版本门槛（≥22.19）+排除 kimi-work；另修 re-arm 死代码、挂死进程清理、菜单名统一。 |
 | dsh-launcher（一键启动本体） | 1.1.86 | 0.1.0-rc.7、0.1.1-rc.2 | 配套清单归一为「目录即事实源」（2026-09-05）：dsh-sync.ps1 清单由硬编码改为扫描 `assets\配套技能\` 目录内全部 `*__skillhub.zip`，与 setup.ps1 安装同源——增删配套只需放/删 zip，引擎零改动；配套描述/注释不再逐名列举 |
 | dsh-launcher（一键启动本体） | 1.1.85 | 0.1.0-rc.7、0.1.1-rc.2 | 配套模型补齐（2026-09-05）：dsh-sync.ps1 的 `$script:CompanionSkills` 由 4 项扩为 6 项（纳入 pdf-parse-v3 / std-official-search），releases 发布循环与 Add 源树同步改引用统一清单——修复「两技能从不发布 releases 归档 / Add 源树」的遗漏；配套清单三处（引擎/文档/setup.ps1 注释）同步为 6 项 |
 | dsh-launcher（一键启动本体） | 1.1.84 | 0.1.0-rc.7、0.1.1-rc.2 | 同步方向建议=真实文件 diff 分析+措辞与按钮一致（上传到 GitHub/拉取 GitHub 版本/取消）；第四行待更新同样经引擎弹窗，方向永不自动判定 |
@@ -358,9 +375,13 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 - **按"以后要发布给任意用户"的标准写代码**：优先级应为「用户正式安装的 Node.js（PATH）＞
   常见版本管理器（nvm 等）＞明确提示用户安装 Node.js」，应用私有运行时最多作为带警告的
   最后兜底，且托盘启动失败时应能自愈重探测而不是直接放弃。
-- 后续优化项（暂不实施）：托盘启动时对渲染出的 node/DSH 路径做存在性校验，失效则重探测并
-  重写自身配置；Find-Node 增加 nvm/官方安装目录探测；无可用 node 时给出「请安装 Node.js」的
-  明确指引而非静默用私有运行时。
+- 后续优化项（2026-09-05 多机分发视角重评：本机「罕见」≠ 多机「罕见」，三项均实施于 1.1.87）：
+  ① Find-Node 通用化——探测链改为 PATH → 官方/nvm 通用目录（Program Files\nodejs /
+     %LOCALAPPDATA%\Programs\nodejs / NVM_HOME / NVM_SYMLINK）→ 宿主私有运行时（kimi/workbuddy，
+     仅宿主机兜底并带警告）→ node.cmd；② 托盘 Web 看护达重启上限时自动重跑 setup.ps1 自愈
+     （重探测 node/DSH 并重渲染托盘；30 分钟熔断标记防死循环），仍失败才禁用并提示人工；
+  ③ 无可用 node 时 setup 与托盘失败文案均明确指引安装 Node.js（https://nodejs.org），
+     不再静默回退私有运行时。
 
 ### 配套技能清单与维护（必须同步，缺一不可）
 
