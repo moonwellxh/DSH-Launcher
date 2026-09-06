@@ -168,10 +168,25 @@ refs:
 ```
 **插件 README 里的"顶层直接写 ANYSEARCH_API_KEY"示例已过时**——顶层追加会让 credentials 插件解析崩溃，dsh web 起不来（表现为"托盘反复崩溃/启动器坏了"的假象）。改凭据前先备份：`Copy-Item x.yaml x.yaml.bak-日期`；修复后用 `dsh web` 就绪信号验证。
 
+8. **AnySearch（@anysearch/anysearch-dsh）DSH 插件安装实战（2026-09-06 实测）**：
+   - 本机是源码树 DSH（`C:\Users\雍远\deepseek-harness`），**不要用 `npx -y @deepseek-ai/dsh ...`**（会另拉 npm 包），直接用源码树 CLI：
+     ```
+     node C:\Users\雍远\deepseek-harness\apps\cli\lib\bin.js plugin --profile web add @anysearch/anysearch-dsh
+     ```
+     Git Bash 里 node/npx/pnpm 不在 PATH，先 `export PATH="/c/Users/雍远/AppData/Local/Programs/nodejs:$PATH"`；pnpm 用 `corepack enable pnpm` 建 shim（corepack 下载 pnpm 12.3.4，可用）。
+   - 装后验证（四层检测）：
+     ① `node ...\bin.js plugin --profile web list` 有 `@anysearch/anysearch-dsh`；
+     ② `node ...\bin.js --profile web --dump-config` 出现 `searchProvider: anysearch`、`fetchProvider: anysearch`、`web-search-anysearch` 条目（只回显凭据引用名，不回显 key）；
+     ③ 重启 web：`powershell -File D:\DSHS\restart-web.ps1`（杀 tray+node web 再拉起，等 3080 返回 200）；
+     ④ 冒烟：用插件自带 Client（`~/.dsh/profiles/web/node_modules/@anysearch/anysearch-dsh/lib/client.js`，方法名 `search/extract/listDomains/getSubDomains`，**没有 capabilities()**）带 `~/.dsh/.credentials.yaml` refs 里的 key 实测 search + listDomains。
+   - **web-app surface 架构坑：host 层 `tool-web` 的 `disabled: true` + `fetch: false` 是 dsh-web-app bundle 有意设计**——agent 工具按会话由 agent preset 挂载（`apps/cli/config/agent-presets/*/agent.cordis.yml` 各自有 tool-web 行）。**不要**在 profile 的 `cordis.patch.yml` 开 host tool-web 的 fetch（本已 disabled，改了也是惰性配置）；插件自己在 web_fetch 缺失时会补注册（`applyWebFetchTool`）。插件安装文档里"确认 tool-web fetch: true"一步只适用于无 preset 架构的旧预览版。
+   - 插件包安装位置：`~/.dsh/profiles/web/`（package.json dependencies + dsh.profile.bundles + pnpm-lock + node_modules）。
+
 ## 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 1.1.9 | 2026-09-06 | 新增「七.8 AnySearch DSH 插件安装实战」：源码树 CLI 直装（不用 npx 拉包）+ corepack pnpm shim + 四层检测命令（plugin list / dump-config / restart-web.ps1 / Client 冒烟）+ web-app host tool-web disabled 是 preset 架构设计、勿在 profile 补丁层开 fetch；Client 方法名 search/extract/listDomains/getSubDomains |
 | 1.1.8 | 2026-09-05 | 凭据格式事故沉淀：credentials.yaml 顶层仅允许 version/refs，密钥须入 refs 区块（插件 README 顶层示例已过时）；AnySearch 配 key 正确写法；改前备份 |
 
 | 1.1.7 | 2026-09-04 | 新增「七、配套分发与同步实战」：模板 vs 渲染副本/CRLF 归一与存在性先查；托盘一键同步拉取覆盖风险（先推后拉）；git push 用 gh-sync config token + Basic(x-access-token)（Bearer 被拒）；配套六位核对清单；中文 zip 条目用 python zipfile；check-env 一键依赖 |
@@ -194,6 +209,7 @@ refs:
 | dsh-launcher 运行副本 | `D:\DSHS`（launcher.version 1.1.81；为技能源模板渲染出的本机实例，脚本差异多为占位符→真实值） |
 | gh-sync token | `~\.dsh\gh-sync\config.json`（内存使用；push 用 Basic base64("x-access-token:"+token)） |
 | AnySearch key 配置 | `~/.dsh/.credentials.yaml` 的 **refs 区块**下（缩进两格）：`ANYSEARCH_API_KEY: "as_sk_..."`；**禁止顶层追加**（会崩 credentials 插件）。匿名 10/窗口，带 key 20/窗口、日 1000 次 |
+| AnySearch 插件（已装 0.1.4） | DSH web profile 插件 `@anysearch/anysearch-dsh`，装法与检测见「七.8」；重启 web 用 `D:\DSHS\restart-web.ps1` |
 | 系统代理 | 注册表 `127.0.0.1:7897`（Clash Verge）；未开时 pip 走清华镜像+NO_PROXY |
 | 技能安装目录 | `C:\Users\雍远\.agents\skills\<技能名>\` |
 | image-mask 打码技能 | `C:\Users\雍远\.agents\skills\image-mask\assets\mask-image.ps1`（零依赖，System.Drawing 纯本地；SKILL.md 同目录） |
