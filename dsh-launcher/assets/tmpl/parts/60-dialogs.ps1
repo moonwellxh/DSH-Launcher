@@ -1,7 +1,7 @@
 function Show-UpgradeDialog {
     param([string]$Title, [string]$Instruction)
     # 读模型目录（用任一现有会话读全局目录）
-    $listVal = Invoke-DshRpc 'session.list' @{}
+    $listVal = Invoke-DshRpc 'session/list' @{ _request = @{} }
     $catSid = $null
     foreach ($it in @($listVal.items)) {
         if (-not $it.origin) { $catSid = $it.sessionId; break }
@@ -9,16 +9,16 @@ function Show-UpgradeDialog {
     $catalog = @()
     $currentModel = ''
     if ($catSid) {
-        $m = Invoke-DshRpc 'session.models' @{ sessionId = $catSid }
-        $currentModel = [string]$m.current.model
-        foreach ($g in $m.groups) {
-            foreach ($md in $g.models) {
+        $m = Invoke-DshRpc 'session/modelCatalog' @{}
+        $currentModel = [string]$m.default.model
+        foreach ($g in @($m.groups)) {
+            foreach ($md in @($g.models)) {
                 $catalog += [pscustomobject]@{
                     provider = [string]$g.id
                     model    = [string]$md.id
                     name     = [string]$md.name
-                    efforts  = @($md.reasoning.efforts | ForEach-Object { [string]$_.id })
-                    defaultEffort = [string]$md.reasoning.defaultEffort
+                    efforts  = $(if ($md.reasoning -and $md.reasoning.efforts) { @($md.reasoning.efforts | ForEach-Object { [string]$_.id }) } else { @() })
+                    defaultEffort = $(if ($md.reasoning -and $md.reasoning.defaultEffort) { [string]$md.reasoning.defaultEffort } else { '' })
                 }
             }
         }
@@ -119,16 +119,18 @@ function Show-UpgradeDialog {
         $promptText = $txtPrompt.Text
         if ([string]::IsNullOrWhiteSpace($promptText)) { [System.Windows.Forms.MessageBox]::Show('提示词为空', $Title, 'OK', 'Warning'); return }
         try {
-            $wsVal = Invoke-DshRpc 'workspace.create' @{ path = $upgradeDir }
+            $wsVal = Invoke-DshRpc 'workspace/create' @{ request = @{ path = $upgradeDir } }
             $wsId = $wsVal.workspace.workspaceId
-            try { Invoke-DshRpc 'workspace.rename' @{ workspaceId = $wsId; title = 'DSH 升级' } | Out-Null } catch {}
-            try { Invoke-DshRpc 'workspace.insertBefore' @{ workspaceId = $wsId } | Out-Null } catch {}
-            $sess = Invoke-DshRpc 'session.create' @{ workspaceId = $wsId }
+            try { Invoke-DshRpc 'workspace/rename' @{ request = @{ workspaceId = $wsId; title = 'DSH 升级' } } | Out-Null } catch {}
+            try { Invoke-DshRpc 'workspace/insertBefore' @{ request = @{ workspaceId = $wsId } } | Out-Null } catch {}
+            $sess = Invoke-DshRpc 'session/create' @{ request = @{ workspaceId = $wsId } }
             $sid = $sess.sessionId
             $sm = @{ sessionId = $sid; provider = $provider; model = $model }
             if ($effort) { $sm.reasoningEffort = [string]$effort }
-            Invoke-DshRpc 'session.selectModel' $sm | Out-Null
-            Invoke-DshRpc 'session.prompt' @{ sessionId = $sid; mode = 'queue'; content = @(@{ type = 'text'; text = $promptText }) } | Out-Null
+            Invoke-DshRpc 'session/selectModel' @{ request = $sm } | Out-Null
+            # 0.1.5 起 session/prompt 的 requestId 是必填形参
+            $reqId = [guid]::NewGuid().ToString('N')
+            Invoke-DshRpc 'session/prompt' @{ request = @{ requestId = $reqId; sessionId = $sid; mode = 'queue'; content = @(@{ type = 'text'; text = $promptText }) } } | Out-Null
             $form.Close()
             Open-Url $webUrl
             $notify.ShowBalloonTip(3000, 'DSH 升级', '升级任务已提交运行。', 'Info')

@@ -214,8 +214,28 @@ package.json 版本，与清单 `compatibleDsh` 字段比对，不在列表即�
   （`id` 决定备份目录名保持稳定，`dir` 决定源码子目录名可随意起名，详见目录内 README）；
 - **清单控制安装**：`自动载入清单-manifest.json` 里每个补丁的 `enabled` 字段决定是否随 `setup.ps1` / `重打全部补丁.bat` 自动安装：`true` = 安装；`false` = **挂起（跳过不装）**。需要临时停用某补丁（如与新版本冲突）时置 `false` 即可，改回 `true` 再跑一次即恢复；不必删除补丁目录。
 - **新增补丁三步**：① 写载荷与安装/还原脚本 → ② 在 `自动载入清单-manifest.json` 登记（`enabled: true`）→ ③ 同步 `assets\补丁管理\` 并重打包 zip（见下）。
-- 已知补丁登记：
-  - `补丁01-档案柜v1-归档升级版`（id: dsh-recycle-bin-v1，**已适配 0.1.1-rc.2**，2026-08-23）：会话 ⋯ 菜单「移入档案柜」+ 侧边栏底部「档案柜」分区（默认折叠）+ 恢复；新增服务端 RPC `workspace.restoreSession`，应用后需重启 dsh web。**适配方法**：对每个目标文件 diff「旧原始 vs 旧补丁」提取增量，再按新版上下文套用（dsh-workspace 新旧一致可直接套用；其余 4 个按锚点插入：RPC handler/schema/路由、客户端 schema/方法、运行时 manager/facade、UI RecycleSection 组件+属性穿透+i18n+actions）。
+- 已知补丁登记（与 `assets\补丁管理\自动载入清单-manifest.json` 保持一致）：
+  - `补丁02-前端缓存no-store`（id: `dsh-frontend-static-no-store`，适配 **0.1.5-rc.1**，2026-09-12，**启用/已应用**）：
+    `packages/host/frontend-static` 的静态资源缓存策略——渲染的 index `no-store`、文件名带内容哈希的资源
+    `public, max-age=31536000, immutable`、其余文件 `no-cache` + ETag（命中 `if-none-match` 回 304）。
+    根治「升级/前端重建后浏览器复用旧 index.html → 白屏 / `client-modules: boot manifest batches must be an array`」。
+    载荷只覆盖真正运行的构建产物 `@deepseek-ai\dsh-host-frontend-static\lib\index.js`
+    （不覆盖 tracked 的 TS 源码，避免占用 git 工作树、阻碍升级第一步 `git pull`）。
+  - `补丁01-档案柜v1-归档升级版`（id: `dsh-recycle-bin-v1`，适配 0.1.1-rc.2，2026-08-23，**挂起 `enabled=false`**）：
+    会话 ⋯ 菜单「移入档案柜」+ 侧边栏底部「档案柜」分区 + 恢复。**与 0.1.5-rc.1 不兼容**：5 个目标包中
+    `dsh-client-runtime` / `dsh-host-apiproxy` 已被上游删除（profile 里是悬空 junction，引擎会直接抛错）；
+    载荷是旧构建整文件覆盖；「归档」半边已由上游原生实现。**不要启用**。
+  - `补丁03-档案柜v2-恢复半边`（id: `dsh-recycle-bin-restore-v2`，适配 **0.1.5-rc.1**，2026-09-12，**启用/已应用**）：
+    上游已原生提供「归档」（⋯ 菜单「归档会话」+ RPC `workspace/archiveSession` + `archivedSessionIds`），本补丁只补缺失的另一半——
+    侧边栏底部「档案柜」入口（`sidebar.footer.action` 列表槽）+ 已归档会话列表 + 一键恢复；新增服务端 Remote
+    `workspace/restoreSession`（幂等，复用既有 `{type:'archived'}` 增量广播）。需求与设计见
+    `docs\补丁-档案柜v2-需求与设计-0.1.5-rc.1.md`；源码增量留档（重适配用）见补丁目录内
+    `源码增量-档案柜v2.patch` + `源码增量-留档说明.md`。应用后需重启 dsh web。
+
+  - 适配方法（新增/改造补丁时复用）：对每个目标文件 diff「上游原状 vs 打补丁后」提取增量，再按新版上下文套用；
+    或（更稳）在源树改 TS → `pnpm run build:lib:host` / `build:lib:client` → 取构建产物做载荷；
+    **首次安装前先 `git checkout` 回上游源码并重建**，使引擎备份里存的是真正的原版文件；
+    装好后再把源树恢复干净（源码增量留档到补丁目录），避免阻挡下次 `git pull`。
 
 ## DSH 升级 + 补丁安全流程（用户规定的固定流程，2026-08-23 起执行）
 
@@ -322,6 +342,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.89 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **托盘全面适配 DSH 0.1.5-rc.1**（2026-09-12，本机实测）：① `Invoke-DshRpc` 改用斜杠端点（`session/list` 等）+ `{args:{<形参名>}}` 信封 + 启动令牌换浏览器认证 cookie（401 自动重登一次；令牌变化=服务重启过则自动重登）；② `session.models` → `session/modelCatalog`，并按新目录形状取值（`default` / `groups[].models[].reasoning?`）；③ `session/prompt` 补必填 `requestId`；④ 「打开 Web UI」/托盘双击/就绪后自动开浏览器一律走带令牌入口 `?token=…`（0.1.5 起裸 URL 无 cookie 直接 401），PWA 冷启动在带令牌时优先 `--app=URL`；⑤ 就绪探测统一为「端口在监听 + 日志已打印启动行 + 带认证 cookie 的 GET / 恰好 200」，两条分支同口径，不再把 401 当已就绪（读不到令牌时一次性气泡提示 + 30 秒兜底）；⑥ `setup.ps1` 的规则 0 幂等判据改为兼容两种标题形态的正则（`## 1 规则 0（…）` 与 `## 规则 0 —— …`），否则每次跑 setup 都重复追加 `~/.dsh/AGENTS.md`；⑦ 新增补丁 `dsh-frontend-static-no-store`（no-store/immutable/no-cache+ETag，注册进清单并已应用）与 `dsh-recycle-bin-restore-v2`（档案柜恢复半边）。实测：扩展冒烟 14/14 PASS + 令牌/就绪 8/8 PASS |
 | dsh-launcher（一键启动本体） | 1.1.88 | 0.1.0-rc.7、0.1.1-rc.2 | 新增配套技能 adversarial-review（对抗性审查与沉淀迭代 v0.1.0，2026-09-06）：打包 adversarial-review__skillhub.zip 纳入 assets\配套技能\（目录即事实源），随启动器分发、setup.ps1 自动装到各机 ~/.agents/skills；配套数 6 → 7 |
 | dsh-launcher（一键启动本体） | 1.1.87 | 0.1.0-rc.7、0.1.1-rc.2 | 多机分发健壮性（2026-09-05）：① setup.ps1 Find-Node 通用化：探测顺序改为 PATH → 官方/nvm 通用目录（Program Files\nodejs、%LOCALAPPDATA%\Programs\nodejs、NVM_HOME/NVM_SYMLINK）→ 宿主私有运行时→ node.cmd；② 托盘 Web 看护达重启上限时自动重跑 setup.ps1 自愈（30 分钟熔断防循环），仍失败才禁用+人工提示；③ 无 node 时明确指引安装 Node.js（setup 与托盘失败提示均补入 https://nodejs.org） ；含抗对审查修复（M1）helper 均 UTF-8 BOM+路径单引号转义（中文用户名机器）；M2 setup 路径渲染期注入 __SETUP_PS1__ + Test-Path 前置；M3 熔断 fail-closed；M4 Find-Node 可运行性/版本门槛（≥22.19）+排除 kimi-work；另修 re-arm 死代码、挂死进程清理、菜单名统一。 |
 | dsh-launcher（一键启动本体） | 1.1.86 | 0.1.0-rc.7、0.1.1-rc.2 | 配套清单归一为「目录即事实源」（2026-09-05）：dsh-sync.ps1 清单由硬编码改为扫描 `assets\配套技能\` 目录内全部 `*__skillhub.zip`，与 setup.ps1 安装同源——增删配套只需放/删 zip，引擎零改动；配套描述/注释不再逐名列举 |

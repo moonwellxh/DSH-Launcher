@@ -5,9 +5,12 @@
 # 输出: 单行 JSON:
 #   {"signal": "sediment|remind|none",
 #    "signals": [{"signal":"sediment","ns":..,"pending":n,"hours_since_last":h,"offpeak":bool}, ...],
+#    "suppressed": [{"ns":..,"until":..,"reason":..}, ...],
 #    "budget": {...}}
 #   signal=多命名空间同时命中时的最高优先级（sediment > remind > none），逐条处理见 signals。
-# 退出码: 0 判定完成（信号含 none 亦为成功）/ 1 state.json 或价格表损坏等异常（按失败协议如实上报，不得静默）
+#   被会话级覆盖（overrides.json）抑制的命名空间不进 signal 判定，只在 signals 里以
+#   {"signal":"suppressed"} 形式留痕，并在顶层 suppressed 汇总（用户必须看得见"为什么不沉淀"）。
+# 退出码: 0 判定完成（信号含 none 亦为成功）/ 1 state.json、overrides.json 或价格表损坏等异常（按失败协议如实上报，不得静默）
 # =====================================================================
 import argparse, json, os, re, sys
 from datetime import datetime, timedelta, timezone
@@ -84,7 +87,8 @@ def load_state(state):
         return {"last_sediment_at": {}, "budget": dict(_BUDGET_DEFAULT),
                 "last_remind_at": None, "pricing_checked_at": None, "iter_seq": 0}
     try:
-        s = json.loads(p.read_text(encoding="utf-8"))
+        # utf-8-sig：容忍外部工具写入的 BOM（否则 BOM 会抛异常并静默重置 iter_seq 等状态）
+        s = json.loads(p.read_text(encoding="utf-8-sig"))
         s.setdefault("budget", dict(_BUDGET_DEFAULT))
         s.setdefault("last_sediment_at", {})
         return s
@@ -108,6 +112,33 @@ def read_pricing(root=None):
         return json.loads(m.group(1))
     except Exception as e:
         fail(1, "pricing JSON 解析失败: %s" % e)
+
+def load_overrides(state):
+    """读会话级覆盖 var/overrides.json（用户明示"停止本次会话的沉淀"时由 agent 落盘）。
+
+    结构: {"stop_sediment": null | {"ns": ["document"], "until": "ISO8601",
+                                    "reason": "…", "created_at": "ISO8601"}}
+    - 文件不存在 → 无覆盖（与历史行为完全一致）。
+    - 文件存在但 JSON 损坏 → 报错退出（退出码 1）。**禁止静默回退**：
+      静默回退会悄悄取消用户设定的抑制，属安全性静默变更。
+    - ns 缺省/空 → 抑制全部命名空间；且 ns 内元素非法不影响其余元素之外的判定。
+    """
+    p = state / "overrides.json"
+    if not p.exists():
+        return {}
+    try:
+        # 用 utf-8-sig 而非 utf-8：本文件由 agent（非 Python save_json）写入，
+        # 而 Windows PowerShell 5.1 的 `Set-Content -Encoding UTF8` 会带 BOM，
+        # 按 utf-8 读会抛 "Unexpected UTF-8 BOM" → 整条抑制功能失效。
+        # utf-8-sig 在无 BOM 时与 utf-8 等价，属零代价兼容（2026-09-10 实测踩坑）。
+        obj = json.loads(p.read_text(encoding="utf-8-sig"))
+    except Exception as e:
+        fail(1, "overrides.json 读取失败: %s" % e,
+             "损坏的 overrides.json 需人工检查；删除该文件即恢复默认（不抑制）行为")
+    if not isinstance(obj, dict):
+        fail(1, "overrides.json 顶层非 JSON 对象", "应为 {\"stop_sediment\": null | {...}}")
+    return obj
+
 
 def in_peak(now, pricing):
     """按价格表峰谷窗口判断是否高峰（weekday=周一~五）。窗口为闭区间。
@@ -145,6 +176,21 @@ def main():
     pricing = read_pricing()
     peak = in_peak(now, pricing)
     state = load_state(resolve_state_dir(cli=args.state_dir))
+    overrides = load_overrides(resolve_state_dir(cli=args.state_dir))
+
+    def suppression_for(ns):
+        """该命名空间是否被会话级覆盖抑制；返回 None 或 {until, reason, expired}。"""
+        stop = overrides.get("stop_sediment")
+        if not isinstance(stop, dict):
+            return None
+        until = parse_dt(stop.get("until"))
+        if until is not None and now > until:
+            return {"until": stop.get("until"), "reason": stop.get("reason"),
+                    "expired": True}   # 已过期：不再抑制，但在 signals 中留痕
+        nss = stop.get("ns")
+        if isinstance(nss, list) and nss and ns not in nss:
+            return None
+        return {"until": stop.get("until"), "reason": stop.get("reason"), "expired": False}
 
     def hours_since(ts):
         last = parse_dt(ts)
@@ -159,6 +205,7 @@ def main():
             reminded_ago = (now - rl).total_seconds() / 3600.0
 
     signals = []
+    suppressed = []
     for ns in _NS:
         if args.ns and ns != args.ns:
             continue
@@ -170,12 +217,26 @@ def main():
         hval = hs if hs is not None else float("inf")    # 从未沉淀 → 视为远超阈值
         hout = round(hs, 1) if hs is not None else None  # 对外输出 null，不暴露内部哨兵
         offpeak = not peak
+
+        sup = suppression_for(ns)
+        if sup and not sup.get("expired"):
+            # 会话级覆盖生效：本 ns 不产生动作信号，但必须留痕（用户要看得见"为什么不沉淀"）
+            signals.append({"signal": "suppressed", "ns": ns, "pending": n,
+                            "hours_since_last": hout, "until": sup.get("until"),
+                            "reason": sup.get("reason")})
+            suppressed.append({"ns": ns, "pending": n, "until": sup.get("until"),
+                               "reason": sup.get("reason")})
+            continue
+
         if n >= 7 and hval >= 48 and offpeak:
             signals.append({"signal": "sediment", "ns": ns, "pending": n,
                             "hours_since_last": hout, "offpeak": True})
         elif n >= 10 and hval >= 72 and (reminded_ago is None or reminded_ago >= 24):
             signals.append({"signal": "remind", "ns": ns, "pending": n,
                             "hours_since_last": hout})
+        if sup and sup.get("expired"):
+            signals.append({"signal": "override-expired", "ns": ns,
+                            "until": sup.get("until"), "reason": sup.get("reason")})
 
     # 单一写入者：仅本脚本（沉淀流程成员）写 state；remind 发出即记录防抖时间
     if signals and any(s["signal"] == "remind" for s in signals) and not args.no_persist:
@@ -185,9 +246,13 @@ def main():
         except Exception as e:
             fail(1, "last_remind_at 写回失败: %s" % e)
 
-    signals.sort(key=lambda s: 0 if s["signal"] == "sediment" else 1)
-    top = signals[0]["signal"] if signals else "none"
-    out_json({"signal": top, "signals": signals, "budget": state.get("budget")})
+    # 只有 sediment/remind 参与顶层 signal 判定；suppressed / override-expired 是留痕项，
+    # 不得被当作"命中"（否则用户设了抑制却仍看到 sediment 信号，抑制形同虚设）
+    actionable = [s for s in signals if s["signal"] in ("sediment", "remind")]
+    actionable.sort(key=lambda s: 0 if s["signal"] == "sediment" else 1)
+    top = actionable[0]["signal"] if actionable else "none"
+    out_json({"signal": top, "signals": signals, "suppressed": suppressed,
+              "budget": state.get("budget")})
 
 
 if __name__ == "__main__":

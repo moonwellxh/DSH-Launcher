@@ -1,0 +1,61 @@
+{
+  "ns": "document",
+  "runs": 7,
+  "severity": {
+    "minor": 43,
+    "suggestion": 12,
+    "major": 23,
+    "blocking": 2
+  },
+  "types": {
+    "classification": 15,
+    "nature": 7,
+    "fidelity": 3,
+    "source": 5,
+    "交叉引用": 1,
+    "术语一致性": 1,
+    "一致性": 6,
+    "完整性": 3,
+    "事实性": 3,
+    "合规性": 3,
+    "边界": 8,
+    "表述": 3,
+    "逻辑": 3,
+    "citation-wrong": 3,
+    "citation-mixed": 1,
+    "era-mismatch": 3,
+    "citation-deprecated": 1,
+    "citation-note-as-body": 1,
+    "source-evidence-lost": 1,
+    "citation-attribution": 1,
+    "unsupported-fact": 1,
+    "citation-scope": 2,
+    "section-as-article": 1,
+    "strength-inconsistent": 2,
+    "scope-gap": 1,
+    "inference-as-fact": 1
+  },
+  "issues_total": 80,
+  "false_positives": 0,
+  "reopen_total": 0,
+  "outcomes": {
+    "passed": 4,
+    "converged": 3
+  },
+  "tokens_in": 0,
+  "tokens_out": 0,
+  "cache_hit": 0,
+  "clause_hits": {},
+  "size_chars_sum": 101297,
+  "guide_dropped": [],
+  "corrupt": [],
+  "snapshots": [
+    "fire-xlsx-zhuze-xuebu-review-r1",
+    "fire-xlsx-zhuze-xuebu-review-r2",
+    "fire-xlsx-zhuze-xuebu-review-r3",
+    "req-spec-v20-r1",
+    "snap-20260906-114500-req01",
+    "snap-20260906-174851-pdf01",
+    "snap-20260911-011500-hzarch-r1"
+  ]
+}

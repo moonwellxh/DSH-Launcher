@@ -1,0 +1,543 @@
+diff --git a/packages/api/session-controller/tests/fake-api.client.ts b/packages/api/session-controller/tests/fake-api.client.ts
+index c86546f630..f3f55700ab 100644
+--- a/packages/api/session-controller/tests/fake-api.client.ts
++++ b/packages/api/session-controller/tests/fake-api.client.ts
+@@ -195,6 +195,9 @@ export class FakeApiClient {
+   onWorkspaceArchiveSession: (payload: unknown) => Promise<RemoteResult<{ archivedSessionIds: SessionId[] }>> =
+     payload => Promise.resolve(ok({ archivedSessionIds: [(payload as { sessionId: SessionId }).sessionId] }))
+ 
++  onWorkspaceRestoreSession: (payload: unknown) => Promise<RemoteResult<{ archivedSessionIds: SessionId[] }>> =
++    () => Promise.resolve(ok({ archivedSessionIds: [] }))
++
+   /** Remote namespaces bound to this fake's programmable unary slots and stream pumps. */
+   sessionRemotes(): RuntimeRemotes {
+     return {
+@@ -273,6 +276,11 @@ export class FakeApiClient {
+           payload,
+           this.onWorkspaceArchiveSession(payload),
+         ),
++        restoreSession: payload => this.record(
++          'workspace.restoreSession',
++          payload,
++          this.onWorkspaceRestoreSession(payload),
++        ),
+         follow: signal => this.openWorkspace(signal),
+       },
+     }
+diff --git a/packages/api/workspace-controller/src/client/model.ts b/packages/api/workspace-controller/src/client/model.ts
+index 326ff7031a..c231e42009 100644
+--- a/packages/api/workspace-controller/src/client/model.ts
++++ b/packages/api/workspace-controller/src/client/model.ts
+@@ -13,6 +13,7 @@ import type {
+   WorkspaceDeleteValue,
+   WorkspaceInsertSessionBeforeRequest,
+   WorkspaceOrderValue,
++  WorkspaceRestoreSessionRequest,
+   WorkspaceValue,
+   WorkspaceId,
+   WorkspaceView,
+@@ -170,6 +171,19 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
+     return result
+   }
+ 
++  /**
++   * Restore one Session and install the returned complete archive set.
++   * @param sessionId - Session to restore.
++   * @returns generated Remote result.
++   */
++  async restoreSession(
++    sessionId: WorkspaceRestoreSessionRequest['sessionId'],
++  ): Promise<RemoteResult<WorkspaceArchiveValue>> {
++    const result = await this.remote.restoreSession({ sessionId })
++    if (result.ok) this.installArchived(result.value.archivedSessionIds)
++    return result
++  }
++
+   /**
+    * Replace the projection from one complete stream-generation baseline.
+    * @param baseline - complete Workspace and archive projection.
+diff --git a/packages/api/workspace-controller/src/client/service.ts b/packages/api/workspace-controller/src/client/service.ts
+index 3cfd42ce0a..286979c754 100644
+--- a/packages/api/workspace-controller/src/client/service.ts
++++ b/packages/api/workspace-controller/src/client/service.ts
+@@ -62,6 +62,11 @@ export interface IWorkspaces {
+    * @param sessionId - Session to archive.
+    */
+   archiveSession(sessionId: SessionId): Promise<void>
++  /**
++   * Return an archived Session to the grouping surfaces it was hidden from.
++   * @param sessionId - archived Session to restore.
++   */
++  restoreSession(sessionId: SessionId): Promise<void>
+   /**
+    * Move a Session within one Workspace account.
+    * @param workspaceId - owning Workspace.
+@@ -116,6 +121,11 @@ export class WorkspaceController extends Service implements IWorkspaces {
+     if (!result.ok) throw commandError('session archive', result.error)
+   }
+ 
++  async restoreSession(sessionId: SessionId): Promise<void> {
++    const result = await this.model.restoreSession(sessionId)
++    if (!result.ok) throw commandError('session restore', result.error)
++  }
++
+   async insertSessionBefore(
+     workspaceId: WorkspaceId,
+     sessionId: SessionId,
+diff --git a/packages/api/workspace-controller/src/commands.ts b/packages/api/workspace-controller/src/commands.ts
+index af48cb82ad..5fc56e8e74 100644
+--- a/packages/api/workspace-controller/src/commands.ts
++++ b/packages/api/workspace-controller/src/commands.ts
+@@ -21,6 +21,7 @@ import type {
+   WorkspaceInsertSessionBeforeRequest,
+   WorkspaceOrderValue,
+   WorkspaceRenameRequest,
++  WorkspaceRestoreSessionRequest,
+   WorkspaceValue,
+ } from './types.ts'
+ 
+@@ -160,6 +161,18 @@ export class WorkspaceCommands {
+     return { archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds] }
+   }
+ 
++  /**
++   * Remove one Session from the registry-global archive set. The session
++   * itself is never validated: an id absent from the set is an idempotent
++   * no-op, so a stale client retry cannot fail.
++   * @param request - archived Session identity to restore.
++   * @returns the complete resulting archive set.
++   */
++  async restoreSession(request: WorkspaceRestoreSessionRequest): Promise<WorkspaceArchiveValue> {
++    await this.ctx.workspaceRegistry.restoreSession(request.sessionId)
++    return { archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds] }
++  }
++
+   private requireWorkspace(workspaceId: WorkspaceId): Workspace {
+     const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(workspaceId))
+     if (workspace === undefined) throw workspaceNotFound(workspaceId)
+diff --git a/packages/api/workspace-controller/src/index.ts b/packages/api/workspace-controller/src/index.ts
+index 40ab0647f2..ed553f9e1b 100644
+--- a/packages/api/workspace-controller/src/index.ts
++++ b/packages/api/workspace-controller/src/index.ts
+@@ -17,6 +17,7 @@ import type {
+   WorkspaceInsertSessionBeforeRequest,
+   WorkspaceOrderValue,
+   WorkspaceRenameRequest,
++  WorkspaceRestoreSessionRequest,
+   WorkspaceValue,
+ } from './types.ts'
+ 
+@@ -109,6 +110,16 @@ export class WorkspaceController extends TypertRemoteService {
+     return this.commands.archiveSession(request)
+   }
+ 
++  /**
++   * Return one archived Session to Workspace grouping surfaces.
++   * @param request - archived Session identity to restore.
++   * @returns the complete resulting archive set.
++   */
++  @Remote('restoreSession')
++  restoreSession(request: WorkspaceRestoreSessionRequest): Promise<WorkspaceArchiveValue> {
++    return this.commands.restoreSession(request)
++  }
++
+   /**
+    * Stream a complete Workspace baseline followed by ordered increments.
+    * @param signal - generation cancellation.
+diff --git a/packages/api/workspace-controller/src/types.ts b/packages/api/workspace-controller/src/types.ts
+index aa053c8d67..d282745487 100644
+--- a/packages/api/workspace-controller/src/types.ts
++++ b/packages/api/workspace-controller/src/types.ts
+@@ -104,6 +104,11 @@ export interface WorkspaceArchiveSessionRequest {
+   readonly sessionId: SessionId
+ }
+ 
++/** Session requested for restoration onto Workspace grouping surfaces. */
++export interface WorkspaceRestoreSessionRequest {
++  readonly sessionId: SessionId
++}
++
+ /** Complete archived Session set after a mutation. */
+ export interface WorkspaceArchiveValue {
+   readonly archivedSessionIds: readonly SessionId[]
+diff --git a/packages/api/workspace-controller/tests/model.client.spec.ts b/packages/api/workspace-controller/tests/model.client.spec.ts
+index 3f097b4116..a7af460550 100644
+--- a/packages/api/workspace-controller/tests/model.client.spec.ts
++++ b/packages/api/workspace-controller/tests/model.client.spec.ts
+@@ -14,6 +14,7 @@ import type {
+   WorkspaceInsertSessionBeforeRequest,
+   WorkspaceOrderValue,
+   WorkspaceRenameRequest,
++  WorkspaceRestoreSessionRequest,
+   WorkspaceValue,
+   WorkspaceId,
+   WorkspaceView,
+@@ -84,6 +85,10 @@ class FakeWorkspaceRemote implements WorkspaceRemote {
+     request: WorkspaceArchiveSessionRequest,
+   ) => Promise<RemoteResult<WorkspaceArchiveValue>> = request =>
+     Promise.resolve(remoteOk({ archivedSessionIds: [request.sessionId] }))
++  onRestoreSession: (
++    request: WorkspaceRestoreSessionRequest,
++  ) => Promise<RemoteResult<WorkspaceArchiveValue>> = () =>
++    Promise.resolve(remoteOk({ archivedSessionIds: [] }))
+ 
+   create(request: WorkspaceCreateRequest): Promise<RemoteResult<WorkspaceCreateValue>> {
+     this.record('create', request)
+@@ -115,6 +120,11 @@ class FakeWorkspaceRemote implements WorkspaceRemote {
+     return this.onArchiveSession(request)
+   }
+ 
++  restoreSession(request: WorkspaceRestoreSessionRequest): Promise<RemoteResult<WorkspaceArchiveValue>> {
++    this.record('restoreSession', request)
++    return this.onRestoreSession(request)
++  }
++
+   async *follow(_signal?: AbortSignal): AsyncGenerator<WorkspaceFollowFrame> {}
+ 
+   private record(method: string, request: unknown): void {
+diff --git a/packages/api/workspace-controller/tests/transport.client.spec.ts b/packages/api/workspace-controller/tests/transport.client.spec.ts
+index b050b7c22c..799574fb50 100644
+--- a/packages/api/workspace-controller/tests/transport.client.spec.ts
++++ b/packages/api/workspace-controller/tests/transport.client.spec.ts
+@@ -30,6 +30,7 @@ import type {
+   WorkspaceInsertSessionBeforeRequest,
+   WorkspaceOrderValue,
+   WorkspaceRenameRequest,
++  WorkspaceRestoreSessionRequest,
+   WorkspaceId,
+   WorkspaceValue,
+   WorkspaceView,
+@@ -140,6 +141,10 @@ class ScriptedWorkspaceRemote implements WorkspaceRemote {
+     throw new Error('unused')
+   }
+ 
++  restoreSession(_request: WorkspaceRestoreSessionRequest): Promise<RemoteResult<WorkspaceArchiveValue>> {
++    throw new Error('unused')
++  }
++
+   async *follow(signal = new AbortController().signal): AsyncIterable<WorkspaceFollowFrame> {
+     const generation = this.generations[this.calls++]
+     if (generation === undefined) throw new Error('no scripted Workspace generation')
+@@ -180,6 +185,10 @@ class CommandWorkspaceRemote implements WorkspaceRemote {
+     archivedSessionIds: [request.sessionId],
+   })))
+ 
++  readonly restoreSession = vi.fn<WorkspaceRemote['restoreSession']>(() => Promise.resolve(remoteOk({
++    archivedSessionIds: [],
++  })))
++
+   async *follow(_signal?: AbortSignal): AsyncIterable<WorkspaceFollowFrame> {}
+ }
+ 
+diff --git a/packages/client/ui-workspace/src/client/contract/slots.ts b/packages/client/ui-workspace/src/client/contract/slots.ts
+index df17251c38..c606a0fa25 100644
+--- a/packages/client/ui-workspace/src/client/contract/slots.ts
++++ b/packages/client/ui-workspace/src/client/contract/slots.ts
+@@ -1,5 +1,5 @@
+ /**
+- * ui-workspace contracts. Two registrations share this package:
++ * ui-workspace contracts. Three registrations share this package:
+  *
+  * - WorkspaceBrowser fills the sidebar shell's `sidebar.workspaces` hole —
+  *   the whole browsing region (section header, search, grouped/flat session
+@@ -7,6 +7,8 @@
+  *   consumes the shell's two-fact owner share (wide / expandSidebar).
+  * - WorkspacePicker fills the conversation empty-state hole (menu + error
+  *   dialog shared with the browser).
++ * - ArchiveBin fills the sidebar foot's optional `sidebar.footer.action` list
++ *   (the archived-Session panel and its restore action).
+  *
+  * Each registration also declares one **directory-flow hole** (`single`
+  * kind): the slot a composed picker package's client half fills with its
+@@ -134,6 +136,13 @@ export type WorkspaceBrowserInjected = {
+    * session clears the selection into the New Session view state.
+    */
+   archiveSession: (sessionId: SessionId) => Promise<void>
++  /**
++   * Return an archived Session to the grouping surfaces it was hidden from
++   * (its Workspace accounting slot was never touched, so it reappears at its
++   * retained position). The archive set itself arrives through the standard
++   * `useWorkspaces` hook.
++   */
++  restoreSession: (sessionId: SessionId) => Promise<void>
+   /**
+    * Reorder a session inside its Workspace account (DOM-insertBefore
+    * semantics: omitted anchor appends to the end). The view refreshes from
+@@ -174,3 +183,23 @@ export type WorkspacePickerProps =
+   & Omit<WorkspacePickerInjected, 'hooks'>
+   & DirectoryPickingHooks
+   & PropsLocale<'workspace'>
++
++/**
++ * Archive-bin injected share (arrives via the register inject factory). Its
++ * data reads use the global framework hooks — the archived id set from
++ * `useWorkspaces`, the titles/timestamps from `useSessions` — so this face
++ * carries only the one Host action the panel drives.
++ */
++export type ArchiveBinInjected = {
++  /** Return one archived Session to the grouping surfaces it was hidden from. */
++  restoreSession: (sessionId: SessionId) => Promise<void>
++}
++
++/**
++ * Full archive-bin props: the sidebar foot owner share (wide/rail state), the
++ * injected restore action, and the locale seat.
++ */
++export type ArchiveBinProps =
++  PropsRuntime<'sidebar.footer.action'>
++  & ArchiveBinInjected
++  & PropsLocale<'workspace'>
+diff --git a/packages/client/ui-workspace/src/client/index.ts b/packages/client/ui-workspace/src/client/index.ts
+index 9204fe7774..f13ddb8e08 100644
+--- a/packages/client/ui-workspace/src/client/index.ts
++++ b/packages/client/ui-workspace/src/client/index.ts
+@@ -1,12 +1,14 @@
+ /**
+- * Workspace plugin, browser half. Two registrations: WorkspaceBrowser fills
++ * Workspace plugin, browser half. Three registrations: WorkspaceBrowser fills
+  * the sidebar shell's `sidebar.workspaces` hole (the whole browsing region),
+- * and WorkspacePicker fills the conversation hero's picker hole
+- * (`conversation.hero.workspace` — both hero forms). Both read real Host
+- * Workspaces through the global useWorkspaces hook, and each declares its
+- * own `single` directory-flow child hole for the composed picker package's
+- * client half (see the contract module doc). Export discipline:
+- * packages/client/AGENTS.md.
++ * WorkspacePicker fills the conversation hero's picker hole
++ * (`conversation.hero.workspace` — both hero forms), and ArchiveBin fills the
++ * sidebar foot's optional `sidebar.footer.action` list (the archived-Session
++ * panel that restores what the browser's row menu archived). All read real
++ * Host Workspaces through the global useWorkspaces hook, and the two
++ * directory-flow surfaces each declare their own `single` child hole for the
++ * composed picker package's client half (see the contract module doc). Export
++ * discipline: packages/client/AGENTS.md.
+  */
+ import type { Context } from '@deepseek-ai/cordis'
+ import type { RemoteHostFacts } from '@deepseek-ai/dsh-api-remotes/client'
+@@ -23,15 +25,17 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+ // Type-only: pulls the Session root standard-hook merge.
+ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+-import type { WorkspaceBrowserInjected, WorkspacePickerInjected } from './contract/slots.ts'
++import type { WorkspaceBrowserInjected, ArchiveBinInjected, WorkspacePickerInjected } from './contract/slots.ts'
+ import { UiWorkspaceService } from './navigation.ts'
+ import { createWorkspaceViewStore } from './stores.ts'
++import { ArchiveBin } from './ArchiveBin.tsx'
+ import { WorkspaceBrowser } from './rows/WorkspaceBrowser.tsx'
+ import { WorkspacePicker } from './WorkspacePicker.tsx'
+ import { en, zh, type WorkspaceKey } from './locales.ts'
+ 
+ export type { UiWorkspace } from './navigation.ts'
+ export type {
++  ArchiveBinInjected, ArchiveBinProps,
+   DirectoryFlowOwnerProps, DirectoryFlowSlotName, DirectoryPickingHooks, DirectoryPickingInjected,
+   WorkspaceBrowserInjected, WorkspaceBrowserProps, WorkspacePickerInjected, WorkspacePickerProps,
+ } from './contract/slots.ts'
+@@ -126,6 +130,7 @@ export function apply(ctx: Context): void {
+       await workspaces.insertBefore(workspaceId, beforeWorkspaceId)
+     },
+     archiveSession: async (sessionId) => { await uiWorkspace.archiveSession(sessionId) },
++    restoreSession: async (sessionId) => { await uiWorkspace.restoreSession(sessionId) },
+     insertSessionBefore: async (workspaceId, sessionId, beforeSessionId) => {
+       await workspaces.insertSessionBefore(workspaceId, sessionId, beforeSessionId)
+     },
+@@ -136,6 +141,11 @@ export function apply(ctx: Context): void {
+     createWorkspace: input => workspaces.create(input),
+     hooks: { directoryFlow: pickerFlowSource },
+   })
++  const archiveBinInjected = (): ArchiveBinInjected => ({
++    // Restore is the mirror of the browser's archive action and shares its
++    // one navigation service; the panel's own data reads are standard hooks.
++    restoreSession: async (sessionId) => { await uiWorkspace.restoreSession(sessionId) },
++  })
+   // Each registration declares its directory-flow child in the same call;
+   // slot injection follows both the owner and declaration HMR lifetimes.
+   ctx.slots.inject('sidebar.workspaces', () => ctx.slots.register(
+@@ -157,4 +167,18 @@ export function apply(ctx: Context): void {
+     },
+     WorkspacePicker,
+   ))
++  // The archived-Session panel rides the sidebar foot's optional list slot
++  // (declared by ui-sidebar, empty until this entry): the archive action is
++  // this plugin's, so its mirror lives beside it instead of in the 60KB
++  // browser. `id`/`order` are list-slot metadata only the shell could read.
++  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register(
++    {
++      name: 'sidebar.footer.action',
++      id: 'archive-bin',
++      order: 0,
++      inject: archiveBinInjected,
++      locale: NS,
++    },
++    ArchiveBin,
++  ))
+ }
+diff --git a/packages/client/ui-workspace/src/client/locales.ts b/packages/client/ui-workspace/src/client/locales.ts
+index af0f535b68..4e00bf0367 100644
+--- a/packages/client/ui-workspace/src/client/locales.ts
++++ b/packages/client/ui-workspace/src/client/locales.ts
+@@ -45,6 +45,12 @@ export const zh = {
+   'delete.pending': '正在删除工作区…',
+   'menu.fork': '分叉会话',
+   'menu.archiveSession': '归档会话',
++  'archiveBin.entry': '档案柜',
++  'archiveBin.title': '档案柜',
++  'archiveBin.empty': '暂无归档会话',
++  'archiveBin.restore': '恢复',
++  'archiveBin.restoring': '正在恢复…',
++  'archiveBin.restoreFailed': '恢复失败：{message}',
+   'sessions.count.one': '{n} 个会话',
+   'sessions.count.other': '{n} 个会话',
+   'actions.workspace.aria': '工作区“{name}”的操作',
+@@ -115,6 +121,12 @@ export const en = {
+   'delete.pending': 'Deleting workspace…',
+   'menu.fork': 'Fork session',
+   'menu.archiveSession': 'Archive session',
++  'archiveBin.entry': 'Archive bin',
++  'archiveBin.title': 'Archive bin',
++  'archiveBin.empty': 'No archived sessions',
++  'archiveBin.restore': 'Restore',
++  'archiveBin.restoring': 'Restoring…',
++  'archiveBin.restoreFailed': 'Restore failed: {message}',
+   'sessions.count.one': '{n} session',
+   'sessions.count.other': '{n} sessions',
+   'actions.workspace.aria': 'Workspace actions for {name}',
+diff --git a/packages/client/ui-workspace/src/client/navigation.ts b/packages/client/ui-workspace/src/client/navigation.ts
+index c968595d8a..b792ea0e99 100644
+--- a/packages/client/ui-workspace/src/client/navigation.ts
++++ b/packages/client/ui-workspace/src/client/navigation.ts
+@@ -1,4 +1,4 @@
+-/** Workspace archive and directory UI capability. */
++/** Workspace archive/restore and directory UI capability. */
+ 
+ import { Service, type Context } from '@deepseek-ai/cordis'
+ import type { ClientRemote, DirectoryListing, RemoteFailure } from '@deepseek-ai/dsh-api-remotes/client'
+@@ -48,6 +48,11 @@ export interface UiWorkspace {
+    * @param sessionId - Session to archive.
+    */
+   archiveSession(sessionId: SessionId): Promise<void>
++  /**
++   * Return an archived Session to its retained Workspace position.
++   * @param sessionId - archived Session to restore.
++   */
++  restoreSession(sessionId: SessionId): Promise<void>
+   /**
+    * Open the Host-native directory picker.
+    * @returns the selected directory, or null when cancelled.
+@@ -176,6 +181,10 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+     await this.workspaces.archiveSession(sessionId)
+   }
+ 
++  async restoreSession(sessionId: SessionId): Promise<void> {
++    await this.workspaces.restoreSession(sessionId)
++  }
++
+   async pickDirectory(): Promise<string | null> {
+     const result = await this.directoryPicker.pick()
+     if (!result.ok) throw new Error(`directory picker failed: ${result.error.message}`)
+diff --git a/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx b/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx
+index b25b32e166..be8755426c 100644
+--- a/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx
++++ b/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx
+@@ -93,6 +93,7 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
+     renameWorkspace: vi.fn(async () => {}),
+     deleteWorkspace: vi.fn(async () => {}),
+     archiveSession: vi.fn(async () => {}),
++    restoreSession: vi.fn(async () => {}),
+     insertWorkspaceBefore: vi.fn(async () => {}),
+     insertSessionBefore: vi.fn(async () => {}),
+     createWorkspace: vi.fn(async () => workspace('created', [])),
+diff --git a/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts b/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
+index 52f106f0f0..e3d9e9c360 100644
+--- a/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
++++ b/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
+@@ -128,12 +128,19 @@ class FakeSessions {
+ class FakeWorkspaces implements IWorkspaces {
+   readonly list: MutableSource<WorkspaceSnapshot>
+   readonly archiveCalls: SessionId[] = []
++  readonly restoreCalls: SessionId[] = []
+   onArchive: IWorkspaces['archiveSession'] = async (sessionId) => {
+     this.list.update(state => ({
+       ...state,
+       archivedSessionIds: [...state.archivedSessionIds, sessionId],
+     }))
+   }
++  onRestore: IWorkspaces['restoreSession'] = async (sessionId) => {
++    this.list.update(state => ({
++      ...state,
++      archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
++    }))
++  }
+ 
+   declare readonly create: IWorkspaces['create']
+   declare readonly rename: IWorkspaces['rename']
+@@ -149,6 +156,11 @@ class FakeWorkspaces implements IWorkspaces {
+     this.archiveCalls.push(sessionId)
+     return this.onArchive(sessionId)
+   }
++
++  restoreSession(sessionId: SessionId): Promise<void> {
++    this.restoreCalls.push(sessionId)
++    return this.onRestore(sessionId)
++  }
+ }
+ 
+ const listing: DirectoryListing = {
+diff --git a/packages/test-support/client-runtime/src/workspaces.ts b/packages/test-support/client-runtime/src/workspaces.ts
+index 60e072af2a..85e18363c8 100644
+--- a/packages/test-support/client-runtime/src/workspaces.ts
++++ b/packages/test-support/client-runtime/src/workspaces.ts
+@@ -142,4 +142,22 @@ export class TestWorkspaces implements IWorkspaces {
+       draft.archivedSessionIds = [...draft.archivedSessionIds, sessionId]
+     })
+   }
++
++  /**
++   * Restore an archived session (recorded). The default mirrors the
++   * production face's observable effect: the id leaves the list state's
++   * archive set.
++   * @param sessionId - session to restore.
++   */
++  async restoreSession(sessionId: SessionId): Promise<void> {
++    this.calls.push({ method: 'restoreSession', args: [sessionId] })
++    const stub = this.stubs.get('restoreSession')
++    if (stub !== undefined) {
++      await (stub(sessionId) as Promise<void>)
++      return
++    }
++    await this.update((draft) => {
++      draft.archivedSessionIds = draft.archivedSessionIds.filter(id => id !== sessionId)
++    })
++  }
+ }
+diff --git a/packages/workspace/workspace/src/index.ts b/packages/workspace/workspace/src/index.ts
+index 037344fce4..8ff2520d88 100644
+--- a/packages/workspace/workspace/src/index.ts
++++ b/packages/workspace/workspace/src/index.ts
+@@ -253,6 +253,27 @@ export class WorkspaceRegistry extends Service {
+     })
+   }
+ 
++  /**
++   * Restore one session durably: drop it from the registry-global archive set
++   * so the `sessionIds` slot archiving never touched brings it back to every
++   * grouping surface. An id that is not archived resolves without writing
++   * (idempotent). No session-existence check runs: archiving is the only
++   * writer of this set, so a member always names a known session and removal
++   * cannot invent one.
++   * @param sessionId - The session to restore.
++   * @returns resolution after durability.
++   */
++  restoreSession(sessionId: SessionId): Promise<void> {
++    return this.enqueueOperation(async () => {
++      const state = this.requireState()
++      if (!state.archivedSessionIds.includes(sessionId)) return
++      await this.setState({
++        ...state,
++        archivedSessionIds: state.archivedSessionIds.filter(archived => archived !== sessionId),
++      })
++    })
++  }
++
+   /**
+    * Whether a session is live, header-indexed, or present in a fresh
+    * persistence listing. Only a definite miss returns false — a failing

@@ -139,6 +139,10 @@ function Is-SyncIgnored {
     param([string]$Rel)
     if ($Rel -in @('install-dir.txt', 'assets/install-dir.txt')) { return $true }
     if ($Rel -match '(^|/)(config\.json|credentials[^/]*|\.dsh[^/]*|[^/]*\.token[^/]*)$') { return $true }
+    # 重型测试语料（2026-09-12）：pdf-parse-v3 的 tests/vision_shootout（385 文件 / 138.8 MiB，含
+    # 24.9 MB 规范 PDF 与 180 张页面 PNG）整目录打包会把技能包顶到 129.21 MB，触发 GitHub 单文件
+    # 100 MB 硬上限致推送被 pre-receive 拒收。此类样本语料不进包、不进源树（技能自身测试仍用本机文件）。
+    if ($Rel -like '*tests/vision_shootout/*') { return $true }
     return $false
 }
 function Get-SyncFileHash {

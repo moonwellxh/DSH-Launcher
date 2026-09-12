@@ -1,0 +1,26 @@
+{
+  "issues": [
+    {"severity":"major","type":"一致性","confidence":"high","anchor":"§7.1结构守恒直通率(行232)+§8-2(行536)+MS-2(行558)；对照对拍报告§8.2","basis":"86.3%(63/73)为GLM原始HTML输出过守恒率，与§7.1定义的适配层后、缺陷阶梯前测量点不在同一管线位置；幻影列坍缩改判D2表使后适配层通过率≠86.3%，MS-2'与基线一致'与坍缩改变结果自相矛盾","suggestion":"固定直通率测量点为适配层输出后，黄金夹具同点重跑73表定新基线，MS-2改为与坍缩应修复的D2子集对应"},
+    {"severity":"major","type":"合规性","confidence":"high","anchor":"§4(行482)出域只在M4一处+§3.1 M4契约(行419-428)+§10(行286)+§5(行497)","basis":"M4名glm_client且契约仅GLM函数，§10列DeepSeek/Qwen独立角色、§5把shootout三厂商基座映射给M4，三处矛盾；--no-egress短路M4能否阻断DeepSeek/Qwen出域未证明，危及敏感文档强制本地约束","suggestion":"M4定位多厂商视觉客户端并补第二意见窄任务接口、显式声明--no-egress阻断全三厂商；或新增独立客户端模块并修订唯一出域点表述"},
+    {"severity":"major","type":"逻辑","confidence":"high","anchor":"§2.2观测通道必须冗余(行59) vs KD4(行509)交叉对位为D3唯一观测信号","basis":"最危险的D3缺陷仅被交叉对位单一信号捕获(守恒门抓不住、签名仅覆盖D1/D2)，与§2.2冗余原则直接冲突，风险最高缺陷落在最不可靠传感器上","suggestion":"为D3补独立观测通道(几何行列聚类或第二意见窄任务转写)，明确无第二传感器时的uncertain降级口径"},
+    {"severity":"major","type":"逻辑","confidence":"medium","anchor":"§2.2(行69)误差模式互不相关+架构思考行85","basis":"GLM与RapidOCR同为同图OCR深度学习模型，退化输入(低DPI/模糊/形近字)可能系统性共错，交叉对位会假一致；独立性系断言非实测，对拍报告§2明示RapidOCR有错漏但从未分析两模型错误相关性","suggestion":"用既有对拍样本实测两通道不一致率/共错率，量化交叉对位灵敏度；共错率不可忽略则降级为提示信号"},
+    {"severity":"major","type":"合规性","confidence":"high","anchor":"§7.1表格漏检率0(行231)+缺陷台账捕捉率100%(行227)；对拍报告§8.2","basis":"漏检率仅对有表N文字信号的表可测(无题号/题号读错/纯图表漏检无从发现)；捕捉率100%不可证伪(被静默漏掉的缺陷传感器看不见无法计数)，两硬指标平凡成立或不可证伪，架空无人复核指标说话前提","suggestion":"改为可测口径上限/抽样复核表述，限定表N信号+人工抽检真值子集与已知签名集D1/D2/D3，声明可测边界"},
+    {"severity":"major","type":"完整性","confidence":"high","anchor":"§2模块表M1-M13(行399-413) vs FR-C2/C4(行150/152)+§5资产映射(行486-500)","basis":"FR-C2线框表几何重建(P1)与FR-C4无框表(P1)无任何模块认领；研究报告附录A正是FR-C2完整原型但§5仅把研究报告§5指给M10图件检测，遗漏附录A表格几何重建原型","suggestion":"明确FR-C2/C4归属(并入M6或M7/M8)，§5补研究报告附录A→表格几何重建模块提炼条目"},
+    {"severity":"major","type":"边界","confidence":"high","anchor":"§4(行109)混合按页走两路之一+FR-A1分诊粒度+§8边界清单(行258)","basis":"分诊为页级，页内混合(文字层页嵌入栅格表格)时PyMuPDF对栅格表不可见→静默丢失；§8未列页内图文混合，试点册纯扫描未覆盖该高频形态，缺口是未暴露而非不存在","suggestion":"分诊加页内区域级探测(文字层覆盖率+图像块/线框检测)，对疑似栅格表区域追加GLM裁剪或几何重建，补入§8边界清单"},
+    {"severity":"major","type":"边界","confidence":"high","anchor":"§8(行254)单册GLM预算上限¥1+FR-D5(行166)DeepSeek峰谷提示+§4(行482)+M12(行412)","basis":"¥1封顶限GLM且¥1/册语义不一；第二意见DeepSeek(高峰入¥3/出¥9，为GLM15-45倍)仅有峰谷提示无封顶，缺陷阶梯触发裁剪重译+第二意见可使成本失控，成本可预算落空","suggestion":"为第二意见设独立预算闸或合并为单册视觉总预算并显式分解，峰谷价差升级为可配置封顶+超限降级"},
+    {"severity":"minor","type":"一致性","confidence":"high","anchor":"标题(行1)v0.1 vs 版本字段(行5)v0.3","basis":"同一文档两版本号自相矛盾","suggestion":"统一版本号"},
+    {"severity":"minor","type":"一致性","confidence":"high","anchor":"§1.3(行390) vs §5(行493) vs §2图例(行397)","basis":"改造5件含finalize_v3.py但§5标扩展，扩展不在复用/改造/提炼/新建四类内，复用3件实为4文件(lib+check-env并作1件)","suggestion":"统一处置类别计数与图例，把扩展并入改造或新增类别"},
+    {"severity":"minor","type":"表述","confidence":"high","anchor":"§3.1(行78)任意PDF vs §8边界(行258)","basis":"任意PDF与§8排除项(加密报错/>1000页/多语种/手写/公式)冲突","suggestion":"目标语改为中英文非加密常规规模PDF或类似限定"},
+    {"severity":"minor","type":"边界","confidence":"medium","anchor":"§10 GLM单图≤10MB/PDF≤50MB(行284)","basis":"单图≤10MB在页图路径下无超限降级处理，PDF≤50MB/100页与页图路径无关","suggestion":"补页图超限降采样/报错，删除或标注PDF上限为可选模式"},
+    {"severity":"minor","type":"事实性","confidence":"medium","anchor":"FR-D5/§10 prompt 3571-4554(行166/284)","basis":"上界4554在所引对拍报告§3可见数据(3571-4211)中不存在，疑出180页批跑台账未标注","suggestion":"标注4554出处或改为报告中可见范围3571-4211"},
+    {"severity":"minor","type":"事实性","confidence":"low","anchor":"§1(行38)/§10(行284) 0.9B","basis":"GLM-OCR 0.9B参数量在所引报告中无出处","suggestion":"补出处或删除参数声明"},
+    {"severity":"minor","type":"表述","confidence":"medium","anchor":"§2.2(行64)传感器全部0-token确定性可复算","basis":"交叉对位依赖本地OCR，非严格0成本/严格可复算(模型版本敏感/CPU耗时)，把确定性规则与OCR通道混为一谈","suggestion":"区分确定性规则传感器与OCR通道传感器的措辞"},
+    {"severity":"minor","type":"一致性","confidence":"high","anchor":"§7.1(行225)守恒100%否则不得写回 vs FR-E5(行179)","basis":"不得写回与FR-E5允许uncertain/unreadable诚实标记写回冲突，应限定为结构化网格不得写回非守恒结果","suggestion":"明确写回口径：非守恒结果不得以结构化网格写回，标记写回除外"},
+    {"severity":"minor","type":"边界","confidence":"medium","anchor":"§2.2(行67)校正有界","basis":"界未定义：规则修复无迭代上界，第二意见调用总量仅由缺陷表数隐式决定","suggestion":"给出规则修复迭代上限与第二意见调用总量上限"},
+    {"severity":"suggestion","type":"边界","confidence":"medium","anchor":"§4分诊+§2.2前馈(行63)","basis":"前馈分诊为单点决策，伪文本层误判时仅诚实标记不自动改道扫描","suggestion":"补分诊误判→下游检测→改道重路由反馈闭环"},
+    {"severity":"suggestion","type":"完整性","confidence":"medium","anchor":"§3.1(行419-451)","basis":"FR-D4第二意见窄任务prompt+strict schema+行对位一致才放行未成显式契约","suggestion":"把第二意见入参/出参schema补入§3.1"},
+    {"severity":"suggestion","type":"逻辑","confidence":"medium","anchor":"既有对拍样本","basis":"M4独立性需量化","suggestion":"实测GLM vs RapidOCR误差相关性，共错率作交叉对位灵敏度元数据"},
+    {"severity":"suggestion","type":"边界","confidence":"medium","anchor":"§8边界清单(行258)","basis":"缺页内混合与单页渲染图超上限边界","suggestion":"补两条边界"},
+    {"severity":"suggestion","type":"边界","confidence":"medium","anchor":"§4/§8(行482/254)","basis":"第二意见通道缺预算闸","suggestion":"建第二意见预算闸，统一单册视觉总预算分解口径"}
+  ]
+}

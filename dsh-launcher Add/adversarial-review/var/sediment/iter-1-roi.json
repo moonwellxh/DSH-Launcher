@@ -1,0 +1,16 @@
+{
+  "iter": 1,
+  "ns": "document",
+  "stats": {
+    "rows": 0,
+    "by_ns": {},
+    "output_tokens_sum": 0,
+    "runs_closed": 0
+  },
+  "suggestions": [
+    {
+      "kind": "no-history",
+      "note": "metrics.jsonl 无历史，暂不给出 ROI 结论"
+    }
+  ]
+}

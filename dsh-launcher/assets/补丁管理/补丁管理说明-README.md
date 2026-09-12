@@ -15,11 +15,13 @@ DSH 重装 / 升级导致补丁失效后，双击 `重打全部补丁.bat`（或
   补丁管理说明-README.md         本文档
   重打全部补丁.bat               一键应用清单中所有启用的补丁
   还原全部补丁.bat               一键还原所有已应用补丁
-  补丁01-档案柜v1-归档升级版\     每个补丁一个独立子目录（编号 + 功能名）
-    安装脚本-档案柜v1.ps1        应用逻辑（必须）
-    还原脚本-档案柜v1.ps1        还原逻辑（必须）
-    载荷文件\                    补丁载荷文件（子路径镜像 DSH 安装内的目标路径）
-      @deepseek-ai\<包名>\lib\...  对应被替换的官方文件
+  补丁01-档案柜v1-归档升级版\     档案柜 v1（仅 0.1.1-rc.2；现挂起，见下「历史补丁」）
+  补丁02-前端缓存no-store\       前端静态资源缓存策略（适配 0.1.5-rc.1）
+    安装脚本-前端缓存no-store.ps1  应用逻辑（必须）
+    还原脚本-前端缓存no-store.ps1  还原逻辑（必须）
+    载荷文件\                    补丁载荷（子路径镜像 DSH 安装内的目标路径）
+      @deepseek-ai\<包名>\lib\...  对应被替换的官方构建产物
+      @deepseek-ai\<包名>\src\...  可选：同步覆盖 TS 源码（防止后续 pnpm build 把补丁冲掉）
 ```
 
 ## 清单（manifest）条目格式
@@ -29,16 +31,16 @@ DSH 重装 / 升级导致补丁失效后，双击 `重打全部补丁.bat`（或
   "version": 1,
   "patches": [
     {
-      "id": "dsh-recycle-bin-v1",            "id" 是稳定标识（也是备份目录名，勿改）
-      "dir": "补丁01-档案柜v1-归档升级版",   "dir" 是补丁子目录名（可随意改成详细名称）
-      "name": "档案柜 v1（归档升级版）",
-      "version": "0.1.1",
+      "id": "dsh-frontend-static-no-store",   "id" 是稳定标识（也是备份目录名，勿改）
+      "dir": "补丁02-前端缓存no-store",       "dir" 是补丁子目录名（可随意改成详细名称）
+      "name": "前端静态资源缓存策略",
+      "version": "0.1.5",
       "description": "……",
       "enabled": true,
       "requiresRestart": true,               应用后是否需要重启 dsh web
-      "install": "安装脚本-档案柜v1.ps1",
-      "restore": "还原脚本-档案柜v1.ps1",
-      "compatibleDsh": "0.1.1-rc.2"         适配的 DSH 版本（可选；引擎不匹配则跳过并提醒）
+      "install": "安装脚本-前端缓存no-store.ps1",
+      "restore": "还原脚本-前端缓存no-store.ps1",
+      "compatibleDsh": ["0.1.5-rc.1"]        适配的 DSH 版本（数组；引擎不匹配则跳过并提醒）
     }
   ]
 }
@@ -47,8 +49,19 @@ DSH 重装 / 升级导致补丁失效后，双击 `重打全部补丁.bat`（或
 - `enabled: false` 的补丁会被跳过（留档不生效）。
 - `id` 与 `dir` 解耦：`id` 决定备份目录（`<备份根>\<id>\`，保持稳定即不丢备份），
   `dir` 只决定源码子目录名，可任意改成便于理解的名称。
-- `compatibleDsh`：引擎应用前读取本机 DSH package.json 版本，不在列表即跳过并提醒
-  先升级 DSH（防旧 DSH 装新适配补丁导致冲突）。
+- `compatibleDsh`：引擎应用前读取本机 DSH 版本（读 profile 的
+  `@deepseek-ai/dsh/package.json`），不在列表即跳过并提醒先升级 DSH
+  （防旧 DSH 装新适配补丁导致冲突）。补丁的 `version` 字段只作显示，不参与校验。
+
+## 载荷绑定 DSH 版本（铁律）
+
+补丁载荷基本都是**整文件覆盖构建产物**，因此与 DSH 版本强绑定：
+
+- DSH 升级后**绝不能直接重跑 setup.ps1 应用旧补丁**——profile 的 `@deepseek-ai` 包是
+  junction 指向源树 `apps/cli/node_modules`，覆盖即改坏新版构建产物（2026-08-23 事故：
+  前端渲染故障但 RPC 直连正常，极难排查）。
+- 正确顺序：升级前把清单里所有补丁 `enabled` 置 `false` → 升级 → 按新版本重新适配
+  （必要时重做载荷）→ 改 `compatibleDsh` → 再启用。
 
 ## 如何新增一个补丁
 
@@ -57,10 +70,17 @@ DSH 重装 / 升级导致补丁失效后，双击 `重打全部补丁.bat`（或
    `Install-PatchedFile <目标相对路径> <载荷文件绝对路径>` 安装每个载荷
    （自动备份原文件；目标不存在时按"新增文件"处理）。
 3. 还原脚本调用 `Restore-AllBackups`（按备份清单还原，补丁新增文件会被删除）。
-4. 在 `自动载入清单-manifest.json` 的 `patches` 里登记（`enabled: true`）。
+4. 在 `自动载入清单-manifest.json` 的 `patches` 里登记（`enabled: true` +
+   填 `compatibleDsh`）。
 5. 本机双击 `重打全部补丁.bat` 验证；改完把 `补丁管理\` 同步到
    dsh-launcher 技能 `assets\补丁管理\`，并按技能规则重打包 zip 归档到 GitHub
    `releases\<当前版本>\`（git commit + push；已弃用 Z: 盘存档）。
+
+> 生成载荷的顺序（源树补丁）：改 TS 源码 → `pnpm run build:lib:host` /
+> `pnpm run build:lib:client` → 从 `packages\...\lib\` 取构建产物作载荷 →
+> **把源码一起放进载荷**（否则后续任一次 `pnpm build` 会把补丁冲掉，状态变得难以解释）。
+> 载荷必须是"上游原状"的对照物：安装时引擎备份的是**当前磁盘上的文件**，因此第一次
+> 安装前应先 `git checkout` 回上游源码并重建，使备份里存的是真正的原版文件。
 
 ## 备份与还原
 
@@ -71,3 +91,12 @@ DSH 重装 / 升级导致补丁失效后，双击 `重打全部补丁.bat`（或
 - 还原 = 把备份文件拷回原位；补丁新增的文件会被移除；全部还原成功后备份目录被删除。
 - 还原判断依据「备份清单是否存在」（即是否已应用），**不受 `enabled` 影响**——
   挂起的补丁（`enabled=false`）仍可一键还原，符合升级安全流程。
+- 「是否已应用」的判据是三条件齐备：备份目录存在 + `backup-manifest.json` 存在 +
+  清单解析后非空（还原成功会把清单清空为 `{}` 并删除备份目录）。
+
+## 当前补丁与历史补丁
+
+| id | 目录 | 适配 DSH | 状态 | 说明 |
+|---|---|---|---|---|
+| `dsh-frontend-static-no-store` | 补丁02-前端缓存no-store | 0.1.5-rc.1 | **启用（已应用）** | index 响应 `no-store`、内容寻址资源 `immutable`、其余 `no-cache`+ETag/304；根治「升级/重建后浏览器复用旧 index.html → 白屏 / `client-modules: boot manifest batches must be an array`」。载荷含构建产物 + 源码两份。 |
+| `dsh-recycle-bin-v1` | 补丁01-档案柜v1-归档升级版 | 仅 0.1.1-rc.2 | **挂起（enabled=false）** | 不兼容 0.1.5-rc.1：5 个目标包中 2 个已被上游删除、载荷是旧构建整文件覆盖、且「归档」半边已被上游原生实现（⋯ 菜单「归档会话」）。**不要启用**；重做方案见 `..\..\docs\补丁-档案柜v2-需求与设计-0.1.5-rc.1.md`。 |

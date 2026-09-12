@@ -116,6 +116,21 @@ def validate(obj, ns_flag):
         int(obj.get("rounds"))
     except (TypeError, ValueError):
         errs.append("rounds 必须是整数")
+    # WBS-4.2：可选 reuse_ledger（R7 复用台账并入快照；与顶层 rounds(int) 不同域）
+    rl = obj.get("reuse_ledger")
+    if rl is not None:
+        if not isinstance(rl, dict):
+            errs.append("reuse_ledger 必须是对象")
+        else:
+            for k in ("round", "reused_count", "new_count", "est_saved_tokens"):
+                if k not in rl:
+                    errs.append("reuse_ledger 缺字段: %s" % k)
+    # M5（2026-09-10）：可选 guide_dropped —— 本轮被注入预算截断、未实际注入的导引单条款 ID。
+    # 沉淀端据此把"从未生效的条款"排除出降权候选（其零命中是结构性的，不是有效性证据）。
+    # 缺省 = 无截断，与历史快照行为完全一致。
+    gd = obj.get("guide_dropped")
+    if gd is not None and (not isinstance(gd, list) or any(not isinstance(x, str) for x in gd)):
+        errs.append("guide_dropped 必须是字符串数组")
     return errs
 
 
@@ -153,6 +168,11 @@ def main():
         if isinstance(it, dict):
             it.setdefault("false_positive", False)
             it.setdefault("reopen_count", 0)
+    # WBS-4.2：reuse_ledger 列表字段缺省补齐
+    rl = obj.get("reuse_ledger")
+    if isinstance(rl, dict):
+        rl.setdefault("reused_scripts", [])
+        rl.setdefault("new_scripts", [])
 
     # 大小纪律: UTF-8 字节 ≤10KB，超限退出码 3 并提示最占字节字段
     canon = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))

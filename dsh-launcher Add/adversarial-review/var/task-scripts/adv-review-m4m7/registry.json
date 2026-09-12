@@ -1,0 +1,17 @@
+{
+  "task_id": "adv-review-m4m7",
+  "ns": "code",
+  "created_at": "2026-09-10T23:20:00+08:00",
+  "note": "本次改造（注入截断规格 / 注入位置 / new_threshold=5 / overrides 抑制 / 反自我强化 M1~M7）的 L0 确定性校验脚本。任务级 registry = 可执行事实源。",
+  "scripts": [
+    {
+      "name": "l0_spec_code_sync",
+      "ns": "code",
+      "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/adv-review-m4m7/l0_spec_code_sync.py",
+      "entrypoint": "main",
+      "run": "python3 var/task-scripts/adv-review-m4m7/l0_spec_code_sync.py",
+      "purpose": "静态比对 SKILL.md §1 参数表与 sediment_run.py 常量/argparse 默认值是否同步（防参数只在脚本里改、漏登记规格）",
+      "hash": "d39d49688663c752de7b1e4e13eb6bc1f0bbbc36"
+    }
+  ]
+}

@@ -1,14 +1,31 @@
 ---
 name: pdf-parse-v3
-description: PDF 解析与结构化 JSON（先分诊后选引擎：文本层→版式坐标，扫描→RapidOCR/WinRT；再按 Schema v3.0 拆章节/条文/表图并溯源）。触发词：读 PDF/PDF 是扫描件吗/规范 PDF/扫描 PDF/OCR 识别/标准条文/PDF 转 JSON/分章节分条文/文字版 PDF/PDF 版式/坐标/字体提取。
-version: 1.0.0
+description: PDF 解析与结构化 JSON（先分诊后选引擎：文本层→版式坐标，扫描→RapidOCR/WinRT；再按 Schema v3.0 拆章节/条文/表图并溯源）。v4.0 管线：任意 PDF → 可溯源结构化 JSON（网格表格+图片索引）+ 附件图片库，全自动、失败诚实标记、成本可预算。触发词：读 PDF/PDF 是扫描件吗/规范 PDF/扫描 PDF/OCR 识别/标准条文/PDF 转 JSON/分章节分条文/文字版 PDF/PDF 版式/坐标/字体提取。
+version: 2.0.0
 ---
 
-# pdf-parse-v3：PDF 解析 → 结构化（Schema v3.0）JSON
+# pdf-parse-v3：PDF 解析 → 结构化（Schema v3.0 / v4.0）JSON
 
-读任何 PDF 前先**分诊**，再按「承载形态」选引擎，最后用 `pdf2v3` 产出**可溯源**的
-v3.0 JSON。**输出标准 = 本技能内置规范**：`docs\PDF解析输出JSON规范.md`
-（《PDF 解析输出 JSON 制作规范》，含 Schema v3.0、溯源/表图/图说、质检 A3/A6）。
+读任何 PDF 前先**分诊**，再按「承载形态」选引擎。默认可产出 **v4.0** 可溯源 JSON
+（网格表格 + lines[] 坐标 + 图片索引 + 附件图片库）；兼容 v3.0。
+**输出标准**：`docs\PDF解析输出JSON规范.md`（Schema v3.0）；v4.0 字段级见 `docs\详细技术设计.md` §5。
+
+## 0.1) v4 管线（Schema v4.0；设计书《详细技术设计.md》v1.2（含入口补全升级与处理遗留修订注））
+```powershell
+# 全自动：任意 PDF → v4.0 JSON（默认唯一产物）+ 附件图片库；MD/HTML 按需（--md/--html，接线 M13）
+python assets\v4\orchestrator.py <pdf> --out <workdir> [--no-egress] [--no-cache] [--md] [--html] [--pages 1-10] [--budget-glm X] [--budget-review Y] [--ignore-gpu-lib]
+# 离线验收（黄金夹具重放，零网络；不改旧资产）
+python tests\v4\test_ms1_smoke.py && python tests\v4\test_ms2_replay.py && python tests\v4\test_ms3_ladder.py && python tests\v4\test_ms5_acceptance.py && python tests\v4\test_triage.py && python tests\v4\test_render.py && python tests\v4\test_orchestrator_pdf.py
+```
+- **引擎降级口径（必读，禁止无感降级）**：v4 **整管线结构性不可跑**（M1/M2 缺失、依赖不满足等无法产出 v4）时，orchestrator **先弹出选择项**（A 解决依赖重跑 v4 / B 显式降级 v3.0 并告知产物差异 / C 取消），用户选择后才能降级——**未选择不产出、禁止静默改走 v3**；非交互（CI/管道）环境中止 + 退出码 + 留痕 `work/degrade_choice.json`。**页/表级视觉不可用**（无 key / `--no-egress` / 预算超限 / 断网）属 FR-D7 自动本地兜底 + 诚实标记，**不弹窗**。
+- **模块**（`assets\v4\`）：`config.default.json`（参数集中）、`triage(M1 分诊)`、`render(M2 页渲染+坐标登记)`、
+  `vision_client(M4 唯一出域点)`、`textlayer(M3)`、`ocr_channel(M5)`、`table_adapter(M6 适配层)`、`gate(M7 校验门四信号分层)`、
+  `defect_ladder(M8 阶梯)`、`structurer(M9 v4 组装)`、`figures(M10 图片文件化)`、`quality(M11 指标/台账)`、
+  `orchestrator(M12 CLI/编排)`、`serialize_md/html(M13)`、`geo_rebuild(M14 几何重建)`、`pipeline(离线验收)`。
+- **设计锚点**：唯一坐标=渲染页像素系；表格=网格模型（守恒 Σ(rs*cs)=R*C）；图=文件+索引不内联像素；
+  校验门四信号分两层（gate-failure 否决 / hints 引导二意见）；D3 终裁在第二意见窄任务转写；
+  任何失败收敛「诚实标记+原文保留」，不静默覆盖；密钥只读用户级配置目录；`--no-egress` 全局短路出域。
+- **兼容**：旧 v1–v3 JSON 读取路径永久保留（FR-G5）；schema_version 字段治理版本；orchestrator 保留 `--page-image` 兼容模式（离线验收/既有测试用）。
 
 ## 0) 新机器首装：依赖自检 + 一键安装
 ```powershell
@@ -27,6 +44,8 @@ powershell -File assets\pdf-extract.ps1 -Pdf "X.pdf" -IncludeText   # 逐页路�
 ```
 
 ## 2) 引擎决策（第一性：PDF 内容=文字对象 or 图像）
+> **默认主路径 = v4 全自动**（`orchestrator.py <pdf>`，分诊/逐页路由/降级弹选全内置，见 §0.1）。
+> 下表为 **v3 兼容引擎表**（旧流程/按需手工路由用；整管线降级到 v3 须先弹选经用户确认，见 §0.1）。
 | 引擎 | 适用 | 入口 | 说明 |
 |---|---|---|---|
 | **layout** | 有文本层（电子版） | `python assets\pdf_layout.py X.pdf out.json` | PyMuPDF 逐行坐标(y,x,x1)/字号/字体；阅读序；页眉页脚按 y 带+重复+页码归一剔除；单/双栏判定 |

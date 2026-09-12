@@ -1,6 +1,8 @@
 function Open-Url([string]$url) {
     # DSH Web URL 优先用已安装的主应用（PWA）；打开失败/未装才回退普通浏览器
     if ($url -eq $webUrl) {
+        # DSH 0.1.5 起裸 URL 无 cookie 会 401：统一改用带启动令牌的入口（浏览器首次访问即换 cookie）
+        $url = Get-DshOpenUrl
         if (Open-DshApp $url) { return }
     }
     # 多级兜底打开 URL：Start-Process → Process.Start → explorer.exe；全失败则抛错

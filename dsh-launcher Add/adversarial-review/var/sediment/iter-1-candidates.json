@@ -1,0 +1,62 @@
+{
+  "iter": 1,
+  "ns": "document",
+  "window_snapshots": 7,
+  "clause_cap": 4,
+  "new_threshold": 5,
+  "guide_dropped": [],
+  "candidates": [
+    {
+      "kind": "new-clause-rejected",
+      "ns": "document",
+      "defect_type": "classification",
+      "count": 15,
+      "reason": "no-fix-evidence",
+      "note": "近窗口出现 15 次但 ledger 中无该类型进入修复流程的 issue；按 M3 不生成新增候选（防偶发噪声固化为条款）"
+    },
+    {
+      "kind": "new-clause-rejected",
+      "ns": "document",
+      "defect_type": "边界",
+      "count": 8,
+      "reason": "no-fix-evidence",
+      "note": "近窗口出现 8 次但 ledger 中无该类型进入修复流程的 issue；按 M3 不生成新增候选（防偶发噪声固化为条款）"
+    },
+    {
+      "kind": "new-clause-rejected",
+      "ns": "document",
+      "defect_type": "nature",
+      "count": 7,
+      "reason": "no-fix-evidence",
+      "note": "近窗口出现 7 次但 ledger 中无该类型进入修复流程的 issue；按 M3 不生成新增候选（防偶发噪声固化为条款）"
+    },
+    {
+      "kind": "new-clause-rejected",
+      "ns": "document",
+      "defect_type": "一致性",
+      "count": 6,
+      "reason": "no-fix-evidence",
+      "note": "近窗口出现 6 次但 ledger 中无该类型进入修复流程的 issue；按 M3 不生成新增候选（防偶发噪声固化为条款）"
+    },
+    {
+      "kind": "new-clause-rejected",
+      "ns": "document",
+      "defect_type": "source",
+      "count": 5,
+      "reason": "no-fix-evidence",
+      "note": "近窗口出现 5 次但 ledger 中无该类型进入修复流程的 issue；按 M3 不生成新增候选（防偶发噪声固化为条款）"
+    },
+    {
+      "kind": "demote-hint",
+      "clause": "D-001",
+      "zero_evidence_windows": 0,
+      "note": "本窗口零命中，但零证据窗口仅 0（阈值 2）——零命中只作线索，不足以判失效（M2）；请结合缺陷率人工判断"
+    },
+    {
+      "kind": "demote-hint",
+      "clause": "D-002",
+      "zero_evidence_windows": 0,
+      "note": "本窗口零命中，但零证据窗口仅 0（阈值 2）——零命中只作线索，不足以判失效（M2）；请结合缺陷率人工判断"
+    }
+  ]
+}

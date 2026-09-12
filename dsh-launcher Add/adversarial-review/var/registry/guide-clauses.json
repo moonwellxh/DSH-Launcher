@@ -1,0 +1,212 @@
+{
+  "policy": {
+    "trial_windows_required": 2,
+    "clause_cap": {
+      "general": 10,
+      "per_ns": 4
+    },
+    "zero_evidence_demote": 2,
+    "zero_evidence_retire": 4,
+    "grandfathered_at": "2026-09-10",
+    "note": "既有条款按 active 祖父化；新条款由 apply_guide_edits 以 trial 登记"
+  },
+  "clauses": [
+    {
+      "id": "G-001",
+      "block": "general",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "G-002",
+      "block": "general",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "G-003",
+      "block": "general",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "G-004",
+      "block": "general",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "G-005",
+      "block": "general",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "G-006",
+      "block": "general",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "G-007",
+      "block": "general",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "G-008",
+      "block": "general",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "R-001",
+      "block": "规范类",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "R-002",
+      "block": "规范类",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "D-001",
+      "block": "文档类",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "D-002",
+      "block": "文档类",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "C-001",
+      "block": "代码类",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    },
+    {
+      "id": "C-002",
+      "block": "代码类",
+      "state": "active",
+      "added_iter": null,
+      "basis": [],
+      "windows_observed": 1,
+      "zero_evidence_windows": 1,
+      "last_counted_iter": 1,
+      "last_evidence_iter": null,
+      "evidence": {
+        "hits": 0
+      }
+    }
+  ],
+  "updated_at": "2026-09-11T01:15:27+08:00"
+}

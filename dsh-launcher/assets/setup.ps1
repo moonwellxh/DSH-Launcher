@@ -53,7 +53,9 @@ function Install-GeneralMemoryRule0 {
             } else {
                 $existing = [System.Text.Encoding]::UTF8.GetString($bytes)
             }
-            if ($existing.Contains($ruleMarker)) {
+            # 幂等判据：兼容两种标题形态（新版 `## 1 规则 0（最高优先强制项）` / 旧版 `## 规则 0 —— …`）。
+            # 原判据只认旧标题，新版格式的文件认不出 → 每次跑 setup 都重复追加整块规则 0（2026-09-10 实测事故）。
+            if ($existing -match '(?m)^#{1,3}\s*(?:1\s+)?规则\s*0') {
                 Write-Host "  通用记忆已含规则 0（$agentsFile），跳过写入" -ForegroundColor DarkGray
                 return
             }

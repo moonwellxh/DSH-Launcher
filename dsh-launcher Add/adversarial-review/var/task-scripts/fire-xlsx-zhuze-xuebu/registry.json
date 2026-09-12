@@ -1,0 +1,12 @@
+{
+  "name": "l0_checks",
+  "ns": "document",
+  "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/fire-xlsx-zhuze-xuebu/l0_checks.js",
+  "entrypoint": "node",
+  "run": "node \"C:\Users\雍远\.agents\skills\adversarial-review\var\task-scripts\fire-xlsx-zhuze-xuebu\\l0_checks.js\"",
+  "purpose": "消防隐患联合排查整治行动情况登记表(竹箦/薛埠)成品确定性校验:内容重放/属性/合并/专业序/词表/非法字符/备注空/ht",
+  "hash": "f7de15d4569f0b1107d076c7bb6075e840494268b7936e2ee9437262b7025128",
+  "hits": 2,
+  "false_positives": 0,
+  "registered_at": "2026-09-07T23:10:00+08:00"
+}

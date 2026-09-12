@@ -413,8 +413,10 @@ class TestSedimentRun(unittest.TestCase):
         self.assertIn("S1", r1["phases_done"])
         cand = Path(self.state) / "sediment" / "iter-1-candidates.json"
         self.assertTrue(cand.exists())
-        self.assertTrue(any(c["kind"] == "new-clause-candidate" and c["count"] >= 3
-                            for c in outj(cand.read_text(encoding="utf-8"))["candidates"]))
+        # 2026-09-10 规格变更（M3）：new_threshold 3→5，且新增候选须有实际返工证据。
+        # 本用例仅 3 条同类 issue 且无 ledger → 不再产出新增候选（旧断言 count>=3 已废）。
+        self.assertFalse(any(c["kind"] == "new-clause-candidate"
+                             for c in outj(cand.read_text(encoding="utf-8"))["candidates"]))
         it = r1["iter"]
         # 第二次：resume + 裁决文件 → S2→S6 全跑通
         edits = self.tmp / "edits.json"
@@ -551,7 +553,8 @@ class TestRegressionFixes(unittest.TestCase):
         self.assertFalse(mod.in_peak(datetime(2026, 9, 7, 13, 0, tzinfo=_BJ), pricing))  # 周一午间空档
 
     def test_demote_candidate_for_zero_hit_clause(self):
-        """F2: 导引单现存条款本窗口零命中 → 产出降权候选（修复死分支）。"""
+        """F2/M2（2026-09-10 规格变更）: 零命中**只作线索**（demote-hint）；
+        判失效须达"零证据窗口"阈值，故此处不得产出 demote-candidate。"""
         skill = make_scratch_skill(self.tmp)
         pend = Path(self.state) / "snapshots" / "pending" / "document"
         pend.mkdir(parents=True, exist_ok=True)
@@ -565,8 +568,9 @@ class TestRegressionFixes(unittest.TestCase):
                          "--skill-root", skill, "--now", "2026-09-05T20:00:00+08:00")
         self.assertEqual(rc, 0, out)
         kinds = {(c["kind"], c.get("clause")) for c in outj(out)["candidates"]}
-        self.assertIn(("demote-candidate", "D-002"), kinds)       # D-002 零命中 → 降权候选
-        self.assertNotIn(("demote-candidate", "D-001"), kinds)    # D-001 有命中 → 不降权
+        self.assertIn(("demote-hint", "D-002"), kinds)            # 零命中但未达阈值 → 仅线索
+        self.assertNotIn(("demote-candidate", "D-002"), kinds)    # 不得仅凭零命中判失效
+        self.assertNotIn(("demote-hint", "D-001"), kinds)         # D-001 有命中 → 不提名
 
     def test_clean_window_no_demote_spam(self):
         """F2 补充: 整窗零 issue（无缺陷信号）时不得误产全量降权候选。"""
@@ -633,6 +637,512 @@ class TestRegressionFixes(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         guide = (Path(skill) / "references" / "pregen-guide.md").read_text(encoding="utf-8")
         self.assertIn("- [D-002] y\n- [D-001] x\n\n### 代码类", guide)
+
+
+GUIDE_FULL = """# 前置导引单（生成前必读）
+
+## 审查预告（固定条款，不淘汰）
+- 本成果交付后将接受对抗性审查：问题按阻断/严重/轻微/建议分级，每条意见须附位置与依据，无证据不成立。
+
+## 通用条款（按权重排序，沉淀机制维护）
+- [G-001] 数据必须标注来源（文件名＋条款号）。
+- [G-002] 交叉引用必须指向真实存在的位置。
+- [G-003] 数值必须带单位。
+
+## 命名空间条款
+### 文档类
+- [D-001] 图表数据与正文表述一致。
+- [D-002] 标题层级、编号连续。
+### 代码类
+- [C-001] 公开接口显式处理非法输入。
+"""
+
+
+class TestGuideInject(unittest.TestCase):
+    """guide_inject.py：注入位置/预算/截断顺序均须为确定性可复跑计算（M-截断规格）。"""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        self.guide = self.tmp / "guide.md"
+        self.guide.write_text(GUIDE_FULL, encoding="utf-8")
+
+    def _gi(self, ns="document", budget=600, no_truncate=False):
+        args = ["guide_inject.py", "--ns", ns, "--guide", str(self.guide)]
+        if no_truncate:
+            args.append("--no-truncate")
+        else:
+            args += ["--budget", str(budget)]
+        rc, out, _ = run(*args)
+        return rc, (outj(out) if out else {})
+
+    def test_budget_must_be_positive(self):
+        """S1 修复：--budget 是必守上限，0/负数一律报错；豁免改由独立开关 --no-truncate 表达。"""
+        for bad in ("0", "-5"):
+            rc, out, _ = run("guide_inject.py", "--ns", "document", "--budget", bad,
+                             "--guide", str(self.guide))
+            self.assertEqual(rc, 2, "budget=%s 应报错，实际 rc=%d out=%s" % (bad, rc, out))
+            self.assertIn("--budget", outj(out)["error"])
+
+    def test_no_truncate_switch(self):
+        rc, r = self._gi(no_truncate=True)
+        self.assertEqual(rc, 0, r)
+        self.assertTrue(r["no_truncate"])
+        self.assertFalse(r["truncated"])
+        self.assertEqual(sorted(r["kept"]), ["D-001", "D-002", "G-001", "G-002", "G-003"])
+
+    def test_notice_splits_dropped_by_block(self):
+        """M-1 修复：命名空间块被整体弃空时须显式说明，避免被误读为"该 ns 无条款"。"""
+        rc, r = self._gi(ns="document", budget=1)
+        self.assertEqual(rc, 2)                      # 预算过小 → 保底核心集都不够
+        rc, full = self._gi(ns="document", no_truncate=True)
+        self.assertEqual(rc, 0)
+        rc, r = self._gi(ns="document", budget=full["est_tokens"] - 15)
+        self.assertEqual(rc, 0, r)
+        self.assertTrue(r["truncated"])
+        self.assertIn("D-002", r["dropped_by_block"]["ns"])
+        self.assertIn("D-001", r["dropped_by_block"]["ns"])   # ns 两条都未被注入
+        self.assertTrue(r["ns_block_present"])
+        # 说明文本必须定长，且点明"本命名空间全部未注入"（ID 走结构化字段）
+        self.assertTrue(r["notice"] is None or "本命名空间" in r["notice"] or r["notice_omitted"])
+
+    def test_within_budget_keeps_all(self):
+        rc, r = self._gi(budget=600)
+        self.assertEqual(rc, 0, r)
+        self.assertFalse(r["truncated"])
+        self.assertEqual(r["dropped"], [])
+        self.assertIn("[G-001]", r["block"])
+        self.assertIn("[D-002]", r["block"])
+        self.assertNotIn("[C-001]", r["block"])      # 非本命名空间条款不得注入
+        self.assertLess(r["est_tokens"], 600)
+
+    def test_truncates_ns_before_general_tail(self):
+        """截断顺序：先弃命名空间块（尾→首），再弃通用块（尾→首）。"""
+        rc, r = self._gi(budget=1)          # 极小预算 → 触发兜底
+        self.assertEqual(rc, 2)             # 保底核心集都装不下 → 必须报错，不得静默残缺注入
+        self.assertIn("保底核心集", r["error"])
+
+    def test_partial_truncation_order(self):
+        # 找一个小到必须截断、又大于保底核心集的预算
+        rc, full = self._gi(no_truncate=True)
+        self.assertEqual(rc, 0)
+        budget = full["est_tokens"] - 15
+        rc, r = self._gi(budget=budget)
+        self.assertEqual(rc, 0, r)
+        self.assertTrue(r["truncated"], r)
+        # D-002 是文档块块尾 → 必须最先被弃
+        self.assertIn("D-002", r["dropped"])
+        # G-001/G-002 属保底核心集 → 永不截断
+        self.assertIn("G-001", r["kept"])
+        self.assertIn("G-002", r["kept"])
+
+    def test_missing_fixed_block_fails(self):
+        self.guide.write_text("## 通用条款\n- [G-001] a\n", encoding="utf-8")
+        rc, r = self._gi(budget=600)
+        self.assertEqual(rc, 2)
+        self.assertIn("审查预告", r["error"])
+
+    def test_est_tokens_deterministic(self):
+        _, a = self._gi(budget=600)
+        _, b = self._gi(budget=600)
+        self.assertEqual(a["est_tokens"], b["est_tokens"])
+
+    def test_general_ns_not_duplicated(self):
+        """回归（实测缺陷）：general 的条款块＝通用块本身，曾被渲染两遍（8→16 条、373→588 token）。"""
+        rc, r = self._gi(ns="general", no_truncate=True)
+        self.assertEqual(rc, 0, r)
+        self.assertEqual(r["block"].count("- [G-001]"), 1)
+        self.assertEqual(sorted(r["kept"]), ["G-001", "G-002", "G-003"])
+
+
+class TestOverrides(unittest.TestCase):
+    """var/overrides.json：会话级"停止沉淀"必须机械生效，不依赖 agent 记忆。"""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.state = Path(self._td.name)
+        pend = self.state / "snapshots" / "pending" / "document"
+        pend.mkdir(parents=True, exist_ok=True)
+        for i in range(7):
+            (pend / ("s%d.json" % i)).write_text('{"id":"s"}', encoding="utf-8")
+        self.now = "2026-09-10T22:39:00+08:00"      # 周四 22:39 = 非高峰
+
+    def _ck(self, now=None):
+        rc, out, _ = run("sediment_check.py", "--ns", "document",
+                         "--state-dir", str(self.state), "--now", now or self.now)
+        return rc, outj(out)
+
+    def test_baseline_fires_sediment(self):
+        rc, r = self._ck()
+        self.assertEqual(rc, 0)
+        self.assertEqual(r["signal"], "sediment")
+
+    def test_override_suppresses(self):
+        import io
+        (self.state / "overrides.json").write_text(
+            json.dumps({"stop_sediment": {"ns": ["document"],
+                                          "until": "2026-09-11T22:00:00+08:00",
+                                          "reason": "用户指示"}}, ensure_ascii=False),
+            encoding="utf-8")
+        rc, r = self._ck()
+        self.assertEqual(rc, 0)
+        self.assertEqual(r["signal"], "none")                 # 抑制生效
+        self.assertEqual(r["suppressed"][0]["ns"], "document")
+        self.assertTrue(any(s["signal"] == "suppressed" for s in r["signals"]))
+        self.assertFalse(any(s["signal"] == "sediment" for s in r["signals"]))
+
+    def test_override_bom_tolerated(self):
+        """PS 5.1 `Set-Content -Encoding UTF8` 会带 BOM；带 BOM 也必须能读。"""
+        raw = json.dumps({"stop_sediment": {"ns": ["document"],
+                                            "until": "2026-09-11T22:00:00+08:00"}},
+                         ensure_ascii=False).encode("utf-8")
+        (self.state / "overrides.json").write_bytes(b"\xef\xbb\xbf" + raw)
+        rc, r = self._ck()
+        self.assertEqual(rc, 0)
+        self.assertEqual(r["signal"], "none")
+
+    def test_override_expiry_restores_signal(self):
+        (self.state / "overrides.json").write_text(
+            json.dumps({"stop_sediment": {"ns": ["document"],
+                                          "until": "2026-09-09T00:00:00+08:00"}},
+                       ensure_ascii=False), encoding="utf-8")
+        rc, r = self._ck()
+        self.assertEqual(r["signal"], "sediment")
+        self.assertTrue(any(s["signal"] == "override-expired" for s in r["signals"]))
+
+    def test_override_other_ns_unaffected(self):
+        (self.state / "overrides.json").write_text(
+            json.dumps({"stop_sediment": {"ns": ["code"],
+                                          "until": "2026-09-11T22:00:00+08:00"}},
+                       ensure_ascii=False), encoding="utf-8")
+        rc, r = self._ck()
+        self.assertEqual(r["signal"], "sediment")
+
+    def test_corrupt_override_fails_loud(self):
+        (self.state / "overrides.json").write_text("{not-json", encoding="utf-8")
+        rc, r = self._ck()
+        self.assertEqual(rc, 1)
+        self.assertIn("overrides.json", r["error"])
+
+
+class TestAntiSelfReinforce(unittest.TestCase):
+    """M1~M7：切断"生成端与审查端同源 → 高命中 → 条款固化"的自我强化闭环。"""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        self.state = str(self.tmp / "state")
+        self.skill = make_scratch_skill(self.tmp)
+        self.now = "2026-09-10T22:39:00+08:00"
+
+    def _pending(self, n, typ="事实性", dropped=None):
+        d = Path(self.state) / "snapshots" / "pending" / "document"
+        d.mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            snap = mk_snap(i, ns="document")
+            snap["issues"] = [{"id": "AR-N-%d" % i, "severity": "major", "type": typ,
+                               "anchor": "第%d节" % i, "basis": "[D-001]",
+                               "status": "已关闭", "false_positive": False, "reopen_count": 0}]
+            if dropped:
+                snap["guide_dropped"] = dropped
+            (d / ("%s.json" % snap["id"])).write_text(json.dumps(snap, ensure_ascii=False),
+                                                      encoding="utf-8")
+
+    def _ledger(self, typ="事实性"):
+        ld = Path(self.state) / "ledger"
+        ld.mkdir(parents=True, exist_ok=True)
+        (ld / "sess-1.json").write_text(json.dumps({
+            "session": "sess-1",
+            "issues": [{"id": "AR-L-001", "severity": "major", "type": typ,
+                        "anchor": "a", "basis": "b", "status": "已关闭",
+                        "history": [{"event": "new"}, {"event": "fix_start"}]}]
+        }, ensure_ascii=False), encoding="utf-8")
+
+    def _sr(self, *extra):
+        args = ["--ns", "document", "--state-dir", self.state,
+                "--skill-root", self.skill, "--now", self.now]
+        return run("sediment_run.py", *(list(extra) + args))
+
+    def _kinds(self, out):
+        return [(c["kind"], c.get("clause") or c.get("defect_type")) for c in outj(out)["candidates"]]
+
+    # ---- M3：新增门槛 5 且须有实际返工证据 ----
+    def test_threshold_5_not_4(self):
+        self._pending(4)
+        self._ledger()
+        rc, out, _ = self._sr()
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn(("new-clause-candidate", "事实性"), self._kinds(out))
+
+    def test_threshold_5_fires_with_fix_evidence(self):
+        self._pending(5)
+        self._ledger()
+        rc, out, _ = self._sr()
+        self.assertEqual(rc, 0, out)
+        self.assertIn(("new-clause-candidate", "事实性"), self._kinds(out))
+
+    def test_no_fix_evidence_rejects_new_clause(self):
+        """M3：仅频次达标、ledger 中无实际返工 → 拒绝生成新增候选。"""
+        self._pending(5)                      # 不写 ledger
+        rc, out, _ = self._sr()
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn(("new-clause-candidate", "事实性"), self._kinds(out))
+        self.assertIn(("new-clause-rejected", "事实性"), self._kinds(out))
+
+    # ---- M5：被截断条款不得进降权候选 ----
+    def test_truncated_clause_excluded_from_demote(self):
+        self._pending(3, dropped=["D-002"])
+        rc, out, _ = self._sr()
+        self.assertEqual(rc, 0, out)
+        kinds = self._kinds(out)
+        self.assertIn(("demote-suppressed", "D-002"), kinds)
+        self.assertNotIn(("demote-candidate", "D-002"), kinds)
+
+    # ---- M4：条款数上限 ----
+    def test_clause_cap_blocks_add(self):
+        (Path(self.skill) / "references" / "pregen-guide.md").write_text(
+            "# G\n\n## 通用条款\n- [G-001] a\n\n## 命名空间条款\n### 文档类\n"
+            "- [D-001] x\n- [D-002] y\n- [D-003] z\n- [D-004] w\n", encoding="utf-8")
+        self._pending(1)
+        edits = self.tmp / "edits.json"
+        edits.write_text(json.dumps({"add": [{"ns": "document", "line": "- [D-005] 新增条款须含编号"}]},
+                                    ensure_ascii=False), encoding="utf-8")
+        rc, out, _ = self._sr("--guide-edits", str(edits))
+        self.assertEqual(rc, 0, out)
+        ac = outj(out)["phases_run"]
+        guide = (Path(self.skill) / "references" / "pregen-guide.md").read_text(encoding="utf-8")
+        self.assertNotIn("D-005", guide)                       # 超上限 → 不得写入
+        self.assertIn("S2", ac)
+
+    # ---- M6：不可证伪措辞拒绝 ----
+    def test_unfalsifiable_wording_rejected(self):
+        self._pending(1)
+        edits = self.tmp / "edits.json"
+        edits.write_text(json.dumps({"add": [{"ns": "document",
+                                              "line": "- [D-009] 生成时应认真重视质量"}]},
+                                    ensure_ascii=False), encoding="utf-8")
+        rc, out, _ = self._sr("--guide-edits", str(edits))
+        self.assertEqual(rc, 0, out)
+        guide = (Path(self.skill) / "references" / "pregen-guide.md").read_text(encoding="utf-8")
+        self.assertNotIn("D-009", guide)
+
+    # ---- M1/M7：生命周期 trial → active ----
+    def test_lifecycle_trial_then_promote(self):
+        self._pending(1)
+        edits = self.tmp / "edits.json"
+        edits.write_text(json.dumps({"add": [{"ns": "document",
+                                              "line": "- [D-007] 每张表须标注表号并与正文一致",
+                                              "basis": ["AR-20260910-001"]}]},
+                                    ensure_ascii=False), encoding="utf-8")
+        rc, out, _ = self._sr("--guide-edits", str(edits))
+        self.assertEqual(rc, 0, out)
+        lcf = Path(self.state) / "registry" / "guide-clauses.json"
+        lc = json.loads(lcf.read_text(encoding="utf-8"))
+        ent = next(x for x in lc["clauses"] if x["id"] == "D-007")
+        self.assertEqual(ent["state"], "trial")                # 新条款一律先试用
+        self.assertEqual(ent["basis"], ["AR-20260910-001"])
+
+        # 第二个窗口：再次沉淀 → 观察期达标且有返工证据 → 转正
+        self._pending(2)
+        edits2 = self.tmp / "edits2.json"
+        edits2.write_text("{}", encoding="utf-8")
+        rc, out2, _ = self._sr("--guide-edits", str(edits2))
+        self.assertEqual(rc, 0, out2)
+        lc = json.loads(lcf.read_text(encoding="utf-8"))
+        ent = next(x for x in lc["clauses"] if x["id"] == "D-007")
+        self.assertEqual(ent["state"], "active")
+
+    def test_lifecycle_retire_removes_entry(self):
+        self._pending(1)
+        edits = self.tmp / "edits.json"
+        edits.write_text(json.dumps({"retire": ["D-002"]}, ensure_ascii=False), encoding="utf-8")
+        rc, out, _ = self._sr("--guide-edits", str(edits))
+        self.assertEqual(rc, 0, out)
+        guide = (Path(self.skill) / "references" / "pregen-guide.md").read_text(encoding="utf-8")
+        self.assertNotIn("D-002", guide)
+        lc = json.loads((Path(self.state) / "registry" / "guide-clauses.json").read_text(encoding="utf-8"))
+        self.assertNotIn("D-002", [x["id"] for x in lc["clauses"]])
+
+    def _seed_lifecycle(self, entries):
+        reg = Path(self.state) / "registry"
+        reg.mkdir(parents=True, exist_ok=True)
+        (reg / "guide-clauses.json").write_text(
+            json.dumps({"clauses": entries}, ensure_ascii=False), encoding="utf-8")
+        return reg / "guide-clauses.json"
+
+    def test_demote_candidate_requires_zero_evidence_windows(self):
+        """M2 一致性：零证据窗口达阈值才产出 demote-candidate（不再仅凭零命中）。"""
+        self._pending(3)
+        self._seed_lifecycle([{"id": "D-002", "block": "文档类", "state": "active",
+                               "added_iter": None, "basis": [], "windows_observed": 2,
+                               "zero_evidence_windows": 2, "last_counted_iter": None,
+                               "evidence": {"hits": 0}}])
+        rc, out, _ = self._sr()
+        self.assertEqual(rc, 0, out)
+        kinds = self._kinds(out)
+        self.assertIn(("demote-candidate", "D-002"), kinds)
+        self.assertNotIn(("demote-hint", "D-002"), kinds)
+
+    def test_hits_reset_zero_evidence_counter(self):
+        """真 bug 回归：既有条款 basis 恒为空，若只认 basis 计零证据，4 窗口后会被集体判淘汰。
+        现行语义＝hits 或 basis 任一存在即重置计数（hits 作"参与度"信号，不能用于升格）。"""
+        self._pending(1)                      # 快照 basis 含 [D-001] → D-001 有引用
+        lcf = self._seed_lifecycle([{"id": "D-001", "block": "文档类", "state": "active",
+                                     "added_iter": None, "basis": [], "windows_observed": 0,
+                                     "zero_evidence_windows": 3, "last_counted_iter": None,
+                                     "evidence": {"hits": 0}}])
+        edits = self.tmp / "e0.json"
+        edits.write_text("{}", encoding="utf-8")
+        rc, out, _ = self._sr("--guide-edits", str(edits))
+        self.assertEqual(rc, 0, out)
+        lc = json.loads(lcf.read_text(encoding="utf-8"))
+        e = next(x for x in lc["clauses"] if x["id"] == "D-001")
+        self.assertEqual(e["zero_evidence_windows"], 0)       # 有引用 → 重置，不会被误判淘汰
+
+    def test_guide_changes_file_written_for_audit(self):
+        """M7 审计：本轮"凭什么改条款"须落 iter-N-guide-changes.json。"""
+        self._pending(1)
+        edits = self.tmp / "e.json"
+        edits.write_text(json.dumps({"add": [{"ns": "document",
+                                              "line": "- [D-008] 表号须与正文一致",
+                                              "basis": ["AR-20260910-002"]}]},
+                                    ensure_ascii=False), encoding="utf-8")
+        rc, out, _ = self._sr("--guide-edits", str(edits))
+        self.assertEqual(rc, 0, out)
+        cf = Path(self.state) / "sediment" / "iter-1-guide-changes.json"
+        self.assertTrue(cf.exists())
+        d = json.loads(cf.read_text(encoding="utf-8"))
+        self.assertEqual(d["edits_requested"]["add"][0]["basis"], ["AR-20260910-002"])
+        self.assertEqual(d["edits_applied"]["add"], ["D-008"])
+        # 新增条款须以 trial 登记（生命周期结论随审计文件落盘）
+        self.assertIn("D-008", d["edits_applied"]["lifecycle"]["trial_registered"])
+        lc = json.loads((Path(self.state) / "registry" / "guide-clauses.json").read_text(encoding="utf-8"))
+        e = next(x for x in lc["clauses"] if x["id"] == "D-008")
+        self.assertEqual(e["state"], "trial")
+        self.assertEqual(e["basis"], ["AR-20260910-002"])     # 依据随审计链保留
+
+    def _pending_no_hit(self, n):
+        """构造 basis 不含任何条款 ID 的快照 → 所有条款本窗口零命中。"""
+        d = Path(self.state) / "snapshots" / "pending" / "document"
+        d.mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            snap = mk_snap(i, ns="document")
+            snap["id"] = "snap-nohit-%03d" % (len(list(d.glob("*.json"))) + i)
+            snap["issues"] = [{"id": "AR-NH-%d" % i, "severity": "major", "type": "表述",
+                               "anchor": "a", "basis": "无条款引用", "status": "已关闭",
+                               "false_positive": False, "reopen_count": 0}]
+            (d / ("%s.json" % snap["id"])).write_text(json.dumps(snap, ensure_ascii=False),
+                                                      encoding="utf-8")
+
+    def _run_window(self, tag):
+        e = self.tmp / ("e-%s.json" % tag)
+        e.write_text("{}", encoding="utf-8")
+        rc, out, _ = self._sr("--guide-edits", str(e))
+        return rc, out
+
+    def test_basis_does_not_permanently_exempt_clause(self):
+        """B1 回归（独立审查阻断项）：basis 是累积字段且永不清除，若用它判"本窗口有证据"，
+        任何曾绑定 basis 的条款将永久豁免降权/淘汰——最该被抗固化的"经流程升格条款"反而免疫。
+        现按窗口判证据（last_evidence_iter == 本轮 N），故此类条款仍会累计零证据窗口。"""
+        self._seed_lifecycle([{"id": "D-001", "block": "文档类", "state": "active",
+                               "added_iter": 1, "basis": ["AR-OLD"],
+                               "windows_observed": 0, "zero_evidence_windows": 0,
+                               "last_counted_iter": None, "last_evidence_iter": 0,
+                               "evidence": {"hits": 0}}])
+        last = None
+        for w in range(1, 5):                       # 连续 4 个窗口，均零命中且无新 basis
+            self._pending_no_hit(1)
+            rc, out = self._run_window("w%d" % w)
+            self.assertEqual(rc, 0, out)
+            last = out
+        cf = Path(self.state) / "sediment" / "iter-4-guide-changes.json"
+        self.assertTrue(cf.exists())
+        d = json.loads(cf.read_text(encoding="utf-8"))
+        lc = json.loads((Path(self.state) / "registry" / "guide-clauses.json").read_text(encoding="utf-8"))
+        e = next(x for x in lc["clauses"] if x["id"] == "D-001")
+        self.assertEqual(e["basis"], ["AR-OLD"])                  # 累积 basis 仍在（未被清）
+        self.assertGreaterEqual(e["zero_evidence_windows"], 2)    # 但仍累计 → 不被永久豁免
+        self.assertIn("D-001", d["lifecycle"]["retire_suggest"])  # 4 窗口 → 出淘汰建议
+
+    def test_bom_in_lifecycle_file_is_read_not_silently_reset(self):
+        """BOM 回归：load_json 原用 utf-8，遇 BOM 抛异常被 except 吞掉 → 静默返回默认值
+        （var/registry/scripts.json 实测带 BOM，会导致 S3 注册表被覆盖为空）。现用 utf-8-sig。"""
+        raw = json.dumps({"clauses": [{"id": "D-001", "block": "文档类", "state": "active",
+                                       "added_iter": None, "basis": [], "windows_observed": 0,
+                                       "zero_evidence_windows": 3, "last_counted_iter": None,
+                                       "last_evidence_iter": None, "evidence": {"hits": 0}}]},
+                         ensure_ascii=False).encode("utf-8")
+        reg = Path(self.state) / "registry"
+        reg.mkdir(parents=True, exist_ok=True)
+        (reg / "guide-clauses.json").write_bytes(b"\xef\xbb\xbf" + raw)
+        self._pending_no_hit(1)
+        rc, out = self._run_window("bom")
+        self.assertEqual(rc, 0, out)
+        lc = json.loads((reg / "guide-clauses.json").read_text(encoding="utf-8-sig"))
+        e = next(x for x in lc["clauses"] if x["id"] == "D-001")
+        # 若 BOM 让它被静默重置，该条会被当新条目重建、计数从 0 起；读到则 3→4
+        self.assertEqual(e["zero_evidence_windows"], 4)
+
+    def test_checkable_heuristic_warns_on_vague_clause(self):
+        """S2 回归：早期 _CHECKABLE_RE 用字符类，任一常见汉字即命中 → warn 分支形同虚设。"""
+        self._pending(1)
+        e = self.tmp / "vague.json"
+        e.write_text(json.dumps({"add": [{"ns": "document",
+                                          "line": "- [D-021] 提升代码质量与整体可维护性"}]},
+                                ensure_ascii=False), encoding="utf-8")
+        rc, out, _ = self._sr("--guide-edits", str(e))
+        self.assertEqual(rc, 0, out)
+        d = json.loads((Path(self.state) / "sediment" / "iter-1-guide-changes.json")
+                       .read_text(encoding="utf-8"))
+        self.assertIn("D-021", d["edits_applied"]["add"])          # 启发式不硬拒 → 仍写入
+        self.assertTrue(any("D-021" in w for w in (d["edits_applied"].get("warn") or [])),
+                        d["edits_applied"].get("warn"))
+
+    def test_checkable_heuristic_passes_clause_with_real_anchor(self):
+        """反面：含真实可核对锚点（编号/数值/单位）的条款不得告警。"""
+        self._pending(1)
+        e = self.tmp / "ok.json"
+        e.write_text(json.dumps({"add": [{"ns": "document",
+                                          "line": "- [D-022] 表号须与正文一致，数值保留 2 位小数并带单位"}]},
+                                ensure_ascii=False), encoding="utf-8")
+        rc, out, _ = self._sr("--guide-edits", str(e))
+        self.assertEqual(rc, 0, out)
+        d = json.loads((Path(self.state) / "sediment" / "iter-1-guide-changes.json")
+                       .read_text(encoding="utf-8"))
+        self.assertFalse(any("D-022" in w for w in (d["edits_applied"].get("warn") or [])))
+
+    def test_m5_full_pipeline_await_then_resume(self):
+        """关闭审查未完成项：M5 走完整 await_edits → resume 链路仍正确，且截断清单入审计文件。"""
+        self._pending(2, dropped=["D-002"])
+        rc, out, _ = self._sr()
+        self.assertEqual(rc, 0, out)
+        k1 = self._kinds(out)
+        self.assertIn(("demote-suppressed", "D-002"), k1)
+        self.assertNotIn(("demote-candidate", "D-002"), k1)
+        it = outj(out)["iter"]
+        e = self.tmp / "r.json"
+        e.write_text("{}", encoding="utf-8")
+        rc, out2, _ = self._sr("--resume", it, "--guide-edits", str(e))
+        self.assertEqual(rc, 0, out2)
+        self.assertEqual(outj(out2)["status"], "done")
+        d = json.loads((Path(self.state) / "sediment" / "iter-1-guide-changes.json")
+                       .read_text(encoding="utf-8"))
+        self.assertEqual(d["guide_dropped"], ["D-002"])           # 截断清单已入审计链
+
+    def test_guide_dropped_accepted_by_snapshot(self):
+        """M5：collect_snapshot 必须接受 guide_dropped（否则观测链断）。"""
+        snap = mk_snap(7)
+        snap["guide_dropped"] = ["D-002"]
+        rc, out, _ = run("collect_snapshot.py", "--ns", "document",
+                         "--state-dir", self.state, stdin=json.dumps(snap, ensure_ascii=False))
+        self.assertEqual(rc, 0, out)
+        snap["guide_dropped"] = "D-002"                        # 类型错 → 拒收
+        rc2, out2, _ = run("collect_snapshot.py", "--ns", "document",
+                           "--state-dir", self.state, stdin=json.dumps(snap, ensure_ascii=False))
+        self.assertEqual(rc2, 2, out2)
 
 
 if __name__ == "__main__":

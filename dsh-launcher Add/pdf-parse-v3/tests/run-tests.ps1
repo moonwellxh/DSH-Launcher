@@ -1,4 +1,4 @@
-﻿# run-tests.ps1 -- four-layer self test for pdf-parse-v3 skill (ASCII only).
+# run-tests.ps1 -- four-layer self test for pdf-parse-v3 skill (ASCII only).
 # Layers: L1 syntax/imports, L2 environment probes, L3 offline unit (PDFs),
 #         L4 live smoke (official standard sites; SKIP on network failure).
 # Usage:  powershell -NoProfile -File tests\run-tests.ps1
@@ -145,6 +145,19 @@ if ($wbpy) {
     Report 'winrt ocr recognizes text' (($o -match 'ok page 1') -and ($t -match 'PDF|Hello|2026'))
   }
 } else { ReportSkip 'offline pdf tests' 'python not found' }
+
+# ---------- L3: v4 pipeline offline tests (zero network) ----------
+if ($wbpy) {
+  $reqOk = $false
+  & $wbpy -c "import requests" 2>$null; $reqOk = ($LASTEXITCODE -eq 0)
+  if ($reqOk) {
+    foreach ($vt in @('test_ms1_smoke.py','test_ms2_replay.py','test_ms3_ladder.py','test_ms5_acceptance.py')) {
+      $mout = & $wbpy (Join-Path $skill "tests\v4\$vt") 2>&1 | Out-String
+      Report ("v4 " + $vt) (($mout -match 'RESULT pass=\d+ fail=0'))
+      if ($mout -match 'FAILED:') { $mout -split "`n" | Where-Object { $_ -match '^\[FAIL\]' } | Select-Object -First 8 | ForEach-Object { Write-Output ('    ' + $_) } }
+    }
+  } else { ReportSkip 'v4 offline tests' 'requests not importable' }
+} else { ReportSkip 'v4 offline tests' 'python not found' }
 
 # (live official-source smoke moved to skill: std-official-search)
 

@@ -1,0 +1,86 @@
+{
+  "models": {
+    "glm": {
+      "model": "glm-ocr",
+      "endpoint": "https://open.bigmodel.cn/api/paas/v4/layout_parsing",
+      "price_in": 0.20,
+      "price_out": 0.20,
+      "max_image_bytes": 10485760
+    },
+    "deepseek": {
+      "model": "deepseek-v4-flash-vision-exp",
+      "endpoint": "https://api.deepseek.com/v1/chat/completions",
+      "price_in_peak": 3.0,
+      "price_in_offpeak": 1.5,
+      "price_out_peak": 9.0,
+      "price_out_offpeak": 4.5,
+      "cache_hit_in_peak": 0.10,
+      "cache_hit_in_offpeak": 0.05,
+      "peak_hours": [[9, 12], [14, 18]],
+      "peak_weekdays_only": true
+    },
+    "qwen": {
+      "model": "qwen3-vl-flash",
+      "endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "price_in": 0.15,
+      "price_out": 1.50,
+      "max_tokens": 12000
+    }
+  },
+  "budget": {
+    "glm_per_volume_cny": 1.0,
+    "second_opinion_per_volume_cny": 1.0,
+    "deepseek_peak_cap_cny": null
+  },
+  "render": {
+    "dpi_default": 220,
+    "resolution_steps": [220, 180, 150]
+  },
+  "ocr": {
+    "engine": "rapidocr_onnxruntime",
+    "det_limit_side_len": 960,
+    "model_version": ""
+  },
+  "adapter": {
+    "defect_signature_re": "[一-鿿][0-9]|[0-9][一-鿿]|级[一二三]",
+    "cell_bbox_estimate": false
+  },
+  "gate": {
+    "row_assign_overlap": 0.5,
+    "geo_cluster_tol_line_h": 0.5
+  },
+  "rebuild": {
+    "wired_kernel_px": 80,
+    "line_cluster_tol_px": 8,
+    "col_tol_word_ratio": 0.3,
+    "row_tol_word_ratio": 0.5,
+    "row_pitch_cv_max": 0.5
+  },
+  "continuation": {
+    "context_chars": 200,
+    "header_sim_min": 0.8
+  },
+  "figures": {
+    "min_area_px": 40000,
+    "min_solidity": 0.35,
+    "crop_pad_px": 5
+  },
+  "intra_page": {
+    "min_region_area_ratio": 0.04,
+    "min_region_area_pt2": 30000,
+    "text_cover_max": 0.3,
+    "wire_h_min": 6,
+    "wire_v_min": 3
+  },
+  "egress": {
+    "allow": true
+  },
+  "cache": {
+    "dir": "work/cache",
+    "enabled": true
+  },
+  "prompt_version": {
+    "narrow_task": "nt-1.0",
+    "crop_hint": "ch-1.0"
+  }
+}

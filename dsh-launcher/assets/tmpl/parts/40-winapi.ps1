@@ -59,6 +59,8 @@ __MODE_WINACTIVATE_CALL__
     # 第 1 次试 --app-id（真 PWA 身份），失败改 --app=URL（应用模式窗口，无需注册，Edge 152 实测可用）；
     # 仍无应用窗口则认输返回 $false，由 Open-Url 回退开普通标签页（保证双击一定有页面出来）
     $tryArgs = @("--app-id=$appId", "--app=$Url")
+    # 带令牌入口优先用 --app=URL（全新会话/无 cookie 时不会被 401 挡住）；裸 URL 时仍先试已注册的 PWA 身份
+    if ($Url -like '*?token=*') { $tryArgs = @("--app=$Url", "--app-id=$appId") }
     for ($attempt = 0; $attempt -lt 2; $attempt++) {
         try { Start-Process -FilePath $edge -ArgumentList @($tryArgs[$attempt]) -ErrorAction Stop } catch { continue }
         Start-Sleep -Seconds 4

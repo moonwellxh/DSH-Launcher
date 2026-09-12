@@ -490,7 +490,7 @@ $miGit.Add_Click({
 
 
 # 单击无动作（不弹气泡，信息在右键菜单顶部三行显示）；双击→开 DSH 主应用（PWA 优先，回退普通浏览器）
-$notify.Add_DoubleClick({ param($s, $e) try { Open-Url $webUrl } catch { Start-Process $webUrl } })
+$notify.Add_DoubleClick({ param($s, $e) try { Open-Url $webUrl } catch { Start-Process (Get-DshOpenUrl) } })
 
 # 启动状态气泡（透明度）
 $notify.ShowBalloonTip(3000, 'DSH', $(if ($listener -eq 0) { if ($null -eq $proc) { '正在启动 DSH Web...' } else { "正在启动 DSH Web（PID $($proc.Id)）..." } } else { "DSH Web 已在运行（PID $listener）" }), 'Info')
@@ -498,19 +498,33 @@ $notify.ShowBalloonTip(3000, 'DSH', $(if ($listener -eq 0) { if ($null -eq $proc
 # 非阻塞就绪检查（Timer，不卡消息循环）
 if ($OpenBrowser) {
     $script:browserOpened = $false
+    $script:readyTicks = 0
+    $script:noTokenHintShown = $false
 $readyTimer = New-Object System.Windows.Forms.Timer
     $readyTimer.Interval = 1000
     $readyTimer.Add_Tick({
         try {
             $ok = $false
-            if ($null -ne $script:proc) {
-                $script:proc.Refresh()
-                # 进程退出不再永久停止 Timer：看护可能自动重启成功，继续等待端口监听 + 就绪日志
-                if ($script:proc.HasExited) {
-                    if ((Get-DshListenerPid) -ne 0 -and (Test-DshReady)) { $ok = $true }
-                } elseif (Test-DshReady) { $ok = $true }
-            } else {
-                try { $r = Invoke-WebRequest -Uri $webUrl -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 600) { $ok = $true } } catch {}
+            $script:readyTicks++
+            # 就绪判定两条分支口径统一（审查 S1）：端口在监听 + 日志已打印启动行 + 带认证 cookie 的 GET / 恰好 200。
+            # 托盘自己拉起服务时同样走这条：只看日志文本会在令牌读不到时把 401 页当"已就绪"。
+            if ($null -ne $script:proc) { $script:proc.Refresh() }
+            $up = ((Get-DshListenerPid) -ne 0) -and (Test-DshReady)
+            if ($up -and -not (Get-DshLaunchToken)) {
+                # 服务已就绪但读不到启动令牌：不再静默降级（审查 S2），一次性告知用户怎么自救
+                if (-not $script:noTokenHintShown) {
+                    $script:noTokenHintShown = $true
+                    try { $notify.ShowBalloonTip(8000, 'DSH', "未能从 dsh-web.log 读到启动令牌：将用普通地址打开页面。若出现 401，请复制该日志里带 token 的地址在浏览器打开一次（此后 30 天内免登录）。", 'Warning') } catch {}
+                }
+                # 令牌读不到时无法用认证探测判定；直接判就绪并打开（提示已在上面给出），不再空等 30 秒
+                $ok = $true
+            } elseif ($up -and (Test-DshWebAuthed)) {
+                $ok = $true
+            }
+            if (-not $ok -and $script:readyTicks -ge 30) {
+                # 30 秒仍拿不到认证会话（读不到令牌/服务异常）：停止等待并如实提示，避免永远不开页面
+                $ok = $true
+                try { $notify.ShowBalloonTip(8000, 'DSH', '端口已就绪但未能完成浏览器认证，将尝试直接打开页面；若看到 401，请用 dsh-web.log 里带 token 的地址打开一次。', 'Warning') } catch {}
             }
             if ($ok) { $readyTimer.Stop(); if (-not $script:browserOpened) { $script:browserOpened = $true; $notify.ShowBalloonTip(2000, 'DSH', 'DSH Web 已就绪，打开浏览器。', 'Info'); try { Open-Url $webUrl } catch {} } }
         } catch {}
