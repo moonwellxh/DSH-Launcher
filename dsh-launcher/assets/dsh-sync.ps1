@@ -142,9 +142,71 @@ function Is-SyncIgnored {
     # 重型测试语料（2026-09-12）：pdf-parse-v3 的 tests/vision_shootout（385 文件 / 138.8 MiB，含
     # 24.9 MB 规范 PDF 与 180 张页面 PNG）整目录打包会把技能包顶到 129.21 MB，触发 GitHub 单文件
     # 100 MB 硬上限致推送被 pre-receive 拒收。此类样本语料不进包、不进源树（技能自身测试仍用本机文件）。
-    if ($Rel -like '*tests/vision_shootout/*') { return $true }
+    if ($Rel -match '(^|[\\/])tests[\\/]vision_shootout[\\/]') { return $true }
     return $false
 }
+
+function Test-SyncPurgePath {
+    # 清理用谓词（2026-09-12）：这些路径在仓库源树里『不允许存在』，历史遗留必须删除。
+    # 与 Is-SyncIgnored（只阻止复制、不负责清理）分开，避免误删其它合法的被忽略文件。
+    param([string]$Rel)
+    if ($Rel -match '(^|[\\/])tests[\\/]vision_shootout[\\/]') { return $true }
+    return $false
+}
+
+function Get-OversizeSyncFile {
+    # 上传前体积闸门（2026-09-12 立；2026-09-12 修订）：GitHub 单文件上限 100 MiB，超过会被 pre-receive
+    # 拒绝；一旦进了本地提交还需改写历史才能推。故在 git add 之前先量体积，超限即中止。
+    # 修订要点：① 边界＝严格大于 100 MiB（GitHub 拒的是 >100 MiB）；
+    # ② 被 .gitignore 忽略的文件本来就不会进提交，逐候选用 `git check-ignore -q` 只看退出码判定并排除
+    #    （不解码任何路径文本，避开中文路径/编码坑），避免误拦；
+    # ③ 判定失败（非仓库、git 不可用、路径异常）一律保守按“会提交”处理，并把失败路径放进 .ProbeErrors
+    #    回报给调用方——不静默。
+    param(
+        [string]$Root,
+        [long]$BlockBytes = 104857600,
+        [long]$WarnBytes = 52428800
+    )
+    $res = New-Object psobject -Property @{
+        Blocked = $false; Scanned = 0; Oversize = @(); Warn = @(); Ignored = @()
+        ProbeErrors = @(); Largest = $null
+    }
+    if (-not (Test-Path -LiteralPath $Root)) { return $res }
+    $root = (Resolve-Path -LiteralPath $Root).Path.TrimEnd('\')
+    $walkErrs = @()
+    $all = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable +walkErrs |
+             Where-Object { $_.FullName -notmatch '\\\.git\\' })
+    $res.Scanned = $all.Count
+    foreach ($e in $walkErrs) { $res.ProbeErrors += ('枚举失败: ' + [string]$e) }
+    foreach ($f in $all) { if ($null -eq $res.Largest -or $f.Length -gt $res.Largest.Length) { $res.Largest = $f } }
+
+    $candidates = @($all | Where-Object { $_.Length -gt $WarnBytes } | Sort-Object Length -Descending)
+    $hasGit = ($null -ne (Get-Command git -ErrorAction SilentlyContinue))
+    foreach ($f in $candidates) {
+        $state = 'no-git'
+        if ($hasGit) {
+            $rel = $f.FullName.Substring($root.Length).TrimStart('\')
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { & git -C $root check-ignore -q -- $rel 2>$null | Out-Null; $rc = $LASTEXITCODE }
+            catch { $rc = 128 }
+            finally { $ErrorActionPreference = $prevEap }
+            if ($rc -eq 0) { $state = 'ignored' }
+            elseif ($rc -eq 1) { $state = 'tracked-or-untracked' }
+            else { $state = 'unknown' }
+        }
+        if ($state -eq 'ignored') { $res.Ignored += $f; continue }
+        if ($f.Length -gt $BlockBytes) {
+            $res.Oversize += $f
+            if ($state -eq 'unknown') { $res.ProbeErrors += $f.FullName }
+        } else {
+            $res.Warn += $f
+        }
+    }
+    $res.Blocked = ($res.Oversize.Count -gt 0)
+    return $res
+}
+
 function Get-SyncFileHash {
     param([string]$Path)
     $bytes = [System.IO.File]::ReadAllBytes($Path)
@@ -550,6 +612,7 @@ function Sync-LauncherScript {
             }
             Get-ChildItem -LiteralPath $srcTree -Recurse -File | ForEach-Object {
                 $rel = ($_.FullName.Substring($srcTree.Length + 1) -replace '\\','/')
+                    if (Test-SyncPurgePath $rel) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue; return }
                 if (Is-SyncIgnored $rel) { return }
                 if (-not $localMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
             }
@@ -567,7 +630,8 @@ function Sync-LauncherScript {
                 }
                 Get-ChildItem -LiteralPath $addTree -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
                     $rel = ($_.FullName.Substring($addTree.Length + 1) -replace '\\','/')
-                    if (Is-SyncIgnored $rel) { return }
+                        if (Test-SyncPurgePath $rel) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue; return }
+                if (Is-SyncIgnored $rel) { return }
                     $src = Join-Path $instDir ($rel -replace '/','\')
                     if (-not (Test-Path -LiteralPath $src)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
                 }
@@ -588,6 +652,28 @@ function Sync-LauncherScript {
             foreach ($p in $published) {
                 $zp = Join-Path $releaseDir ($p + '__skillhub.zip')
                 try { $z = [System.IO.Compression.ZipFile]::OpenRead($zp); $z.Dispose() } catch { throw "打包校验失败（$p）：$($_.Exception.Message)" }
+            }
+            $sizeGate = Get-OversizeSyncFile -Root $ghCache
+            if ($sizeGate.Ignored.Count -gt 0) {
+                $igTop = @($sizeGate.Ignored | Select-Object -First 3 | ForEach-Object { $_.FullName.Substring($ghCache.Length).TrimStart('\') }) -join '; '
+                Write-SyncStatus 'info' ("有 " + $sizeGate.Ignored.Count + " 个大于 50 MiB 的文件被 .gitignore 忽略，不会进入提交，未计入闸门：" + $igTop)
+            }
+            if ($sizeGate.Blocked) {
+                $top = @($sizeGate.Oversize | Select-Object -First 5)
+                $bigList = ($top | ForEach-Object {
+                    '  - ' + $_.FullName.Substring($ghCache.Length).TrimStart('\') + ' : ' + [string]([math]::Round($_.Length / 1048576, 1)) + ' MiB'
+                }) -join "`r`n"
+                if ($sizeGate.Oversize.Count -gt $top.Count) {
+                    $bigList += "`r`n  ...另有 " + ($sizeGate.Oversize.Count - $top.Count) + " 个超限文件（本次共 " + $sizeGate.Oversize.Count + " 个）"
+                }
+                $probeNote = ''
+                if ($sizeGate.ProbeErrors.Count -gt 0) {
+                    $probeNote = "`r`n注意：另有 " + $sizeGate.ProbeErrors.Count + " 项未能判定是否被 .gitignore 忽略（文件枚举失败，或 git check-ignore 失败/不在仓库内），已按保守策略一并阻止。"
+                }
+                throw ("检测到超过 GitHub 单文件上限（>100 MiB）的文件，本次共 " + $sizeGate.Oversize.Count + " 个，已阻止本次提交与推送（未提交、未推送，历史未被污染）。`r`n处置：把大文件移出技能目录，或在仓库 .gitignore 中忽略它，或在 dsh-sync.ps1 的 Is-SyncIgnored 中加一条排除规则后重试。`r`n（提示：本次已生成的技能包位于 " + $releaseDir + "，可自行清理。）`r`n" + $bigList + $probeNote)
+            }
+            if ($sizeGate.Warn.Count -gt 0) {
+                Write-SyncStatus 'warning' ("注意：" + $sizeGate.Warn.Count + " 个文件大于 50 MiB（GitHub 提醒阈值，严格大于；恰好 50 MiB 不告警），最大 " + [string]([math]::Round($sizeGate.Warn[0].Length / 1048576, 1)) + " MiB：" + $sizeGate.Warn[0].FullName.Substring($ghCache.Length).TrimStart('\'))
             }
             $r = Invoke-SyncGit @('add','-A') $ghCache
             if ($r.code -ne 0) { throw (Format-SyncError $r.code $r.text 'git add') }
