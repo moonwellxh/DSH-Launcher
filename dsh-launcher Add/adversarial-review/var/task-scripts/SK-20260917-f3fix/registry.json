@@ -1,0 +1,153 @@
+{
+ "namespace": "code",
+ "target": "fire-check-consolidation / scripts/f3_register.py 四处缺陷修复（连云港监狱查验项目实跑暴露）",
+ "session": "SK-20260917-f3fix",
+ "updated": "2026-09-17",
+ "location_rule": "R1/R3 定稿：任务脚本目录 = <adversarial-review 技能>/var/task-scripts/<task-id>/（不污染被审树）。registry 为任务级可执行事实源（code_path 绝对，脚本真实存在可运行）；技能级 var/registry/scripts.json 为晋升注册表（元数据），二者靠 code_path 互指不合并。",
+ "note": "① 本批为**独立复审者**（R1、R2 两个互不相同的子审查者）自建的一次性探针，原散落于会话临时目录 （D:\\DeepSeekS\\My Projcet\\.tmp_fire_lianyungang 与 .tmp_rev_r2），按 §2 落盘义务转为任务级脚本：**逐字节原样**（仅改名），未做任何改写以保观测独立性。② **刻意不用 `l0_` 前缀**：R1 说明模板要求 l0_* 脚本含\"作用/输入/输出/复跑\"四行 docstring 且以 `def main(` 为入口，而本批探针是复审者临时产物、多为模块级执行——故用 `rev_r1_*`/`rev_r2_*` 命名，**不冒充模板合规资产**（`l0_registry_check.py` 对非 l0_* 只查字段/文件/hash，故可过；若将来要晋升为技能级 L0 资产，须先按模板重构）。③ 脚本内素材路径常量仍指向上述临时目录（如 `.tmp_rev_r2\\e2e_out.xlsx`、`.tmp_rev_r2\\corpus_same_names`），复跑前需确认该目录仍在或改路径；`rev_r2_info_arg_states.py` 依赖 `.tmp_rev_r2\\corpus_same_names\\` 下 8 份 docx 副本（未一并转存，避免技能目录内堆积大文件）。④ `run` 统一带 `-X utf8`：探针会 print 上标²/阿拉伯数字等字符，GBK 控制台下原样运行会 UnicodeEncodeError。",
+ "scripts": [
+  {
+   "name": "rev_r1_name_regression",
+   "ns": "code",
+   "round": "r1",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r1_name_regression.py",
+   "entrypoint": "<module>",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r1_name_regression.py\"",
+   "purpose": "R1 独立回归复算：从改前 AST 提取旧命名解析器，对 4 个语料目录 129 个去重文件名逐条对照（不复用 tests/ 内函数，保观测独立）",
+   "hash": "27246898dba302f03753eeba33328df6f8a598f2",
+   "module_level": true
+  },
+  {
+   "name": "rev_r1_adv_cases",
+   "ns": "code",
+   "round": "r1",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r1_adv_cases.py",
+   "entrypoint": "safe",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r1_adv_cases.py\"",
+   "purpose": "R1 对抗用例：cell_auto / is_num_text / num_text / parse_info / find_info / cat_of 边界（nan/inf/1e400/长整数/非法 A 列/重名/前缀多命中）",
+   "hash": "dc0d2ca2365cda396556a0ab9ff57b5c7e3257ae",
+   "module_level": false
+  },
+  {
+   "name": "rev_r1_prefix_fallback",
+   "ns": "code",
+   "round": "r1",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r1_prefix_fallback.py",
+   "entrypoint": "mk",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r1_prefix_fallback.py\"",
+   "purpose": "R1：find_info 前缀兜底\"取首个\"的歧义验证（合成多命中数据，查是否有确定性错配）",
+   "hash": "764fd7420dec4360222d0c10ba2c61806c0b1b87",
+   "module_level": false
+  },
+  {
+   "name": "rev_r1_xml_and_cat",
+   "ns": "code",
+   "round": "r1",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r1_xml_and_cat.py",
+   "entrypoint": "<module>",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r1_xml_and_cat.py\"",
+   "purpose": "R1：产物 XML 转义 / 分类词回填 / 语法与既有产物合法性",
+   "hash": "94dd9ee4a7a8c93e9b6187c6cfe9e616cfbf30d6",
+   "module_level": true
+  },
+  {
+   "name": "rev_r1_info_survey",
+   "ns": "code",
+   "round": "r1",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r1_info_survey.py",
+   "entrypoint": "<module>",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r1_info_survey.py\"",
+   "purpose": "R1：全盘检索\"基础信息\"类 xlsx 的存在性（供 --info 取证）",
+   "hash": "c86071b47aba4ac56e0afd24617844696c954723",
+   "module_level": true
+  },
+  {
+   "name": "rev_r1_ast_dump",
+   "ns": "code",
+   "round": "r1",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r1_ast_dump.py",
+   "entrypoint": "<module>",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r1_ast_dump.py\"",
+   "purpose": "R1 调试用：dump 改前 f3_register.py 的 AST 节点（供提取旧函数）",
+   "hash": "b1831a22429ef9697050600283cbe6d452c5aab1",
+   "module_level": true
+  },
+  {
+   "name": "rev_r2_increment_probe",
+   "ns": "code",
+   "round": "r2",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r2_increment_probe.py",
+   "entrypoint": "<module>",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r2_increment_probe.py\"",
+   "purpose": "R2 增量探针：S1 六态入参 / M1 含上标² 的行 / 命名与 resolve 行为",
+   "hash": "7f58309e032623f0628220e670dc0d4c25901e4d",
+   "module_level": true
+  },
+  {
+   "name": "rev_r2_info_arg_states",
+   "ns": "code",
+   "round": "r2",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r2_info_arg_states.py",
+   "entrypoint": "run",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r2_info_arg_states.py\"",
+   "purpose": "R2：--info 八态实测（不存在/目录/相对路径 CWD 对与错/不传/空表/仅表头/正常）",
+   "hash": "5f1fa5d969f0a6147ae87f0b2a5ea135a7b9a1b8",
+   "module_level": false
+  },
+  {
+   "name": "rev_r2_num_ab",
+   "ns": "code",
+   "round": "r2",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r2_num_ab.py",
+   "entrypoint": "<module>",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r2_num_ab.py\"",
+   "purpose": "R2：改前 f3_base vs 当时当前 40 例 A/B（数值字面量写入形态的方向性差异）",
+   "hash": "ba05c61e24ed1a5712ac3a2b7121d8f87db8162e",
+   "module_level": true
+  },
+  {
+   "name": "rev_r2_find_info_sweep",
+   "ns": "code",
+   "round": "r2",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r2_find_info_sweep.py",
+   "entrypoint": "old_find_info",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r2_find_info_sweep.py\"",
+   "purpose": "R2：182 条真实文件名 × 2 张信息表 old(取首个) vs new(唯一命中) 差异扫描",
+   "hash": "2e073a76f8d5b340b22fb80019471af9cfcad32b",
+   "module_level": false
+  },
+  {
+   "name": "rev_r2_e2e_verify",
+   "ns": "code",
+   "round": "r2",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r2_e2e_verify.py",
+   "entrypoint": "grid",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r2_e2e_verify.py\"",
+   "purpose": "R2：端到端复算（真实文件名，无后处理）产物合法性 + computed 比对",
+   "hash": "2b8a7141db68b91b02cfdbbca5953183f7a40c53",
+   "module_level": false
+  },
+  {
+   "name": "rev_r2_content_verify",
+   "ns": "code",
+   "round": "r2",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r2_content_verify.py",
+   "entrypoint": "<module>",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r2_content_verify.py\"",
+   "purpose": "R2：产物与冻结交付件逐格比对（非空格计数 + 差异清单）",
+   "hash": "7c218f8a23b16332c1d28626072f5b0d118a3578",
+   "module_level": true
+  },
+  {
+   "name": "rev_r2_survey",
+   "ns": "code",
+   "round": "r2",
+   "code_path": "C:/Users/雍远/.agents/skills/adversarial-review/var/task-scripts/SK-20260917-f3fix/rev_r2_survey.py",
+   "entrypoint": "old_find_info",
+   "run": "python -X utf8 \"C:\\Users\\雍远\\.agents\\skills\\adversarial-review\\var\\task-scripts\\SK-20260917-f3fix\\rev_r2_survey.py\"",
+   "purpose": "R2：素材存在性勘察",
+   "hash": "93800dd02edf5e557112312bf3ad381a237d6d41",
+   "module_level": false
+  }
+ ]
+}

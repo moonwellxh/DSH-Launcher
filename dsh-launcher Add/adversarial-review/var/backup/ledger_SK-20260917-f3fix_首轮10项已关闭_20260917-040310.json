@@ -1,0 +1,397 @@
+{
+  "session": "SK-20260917-f3fix",
+  "created_at": "2026-09-17T03:55:18+08:00",
+  "updated_at": "2026-09-17T04:02:57+08:00",
+  "issues": [
+    {
+      "id": "AR-20260917-001",
+      "severity": "major",
+      "type": "边界",
+      "anchor": "scripts/f3_register.py :: find_info(info, name) 首段（对 _norm 有 isinstance 守卫，对 info 本体无）",
+      "basis": "调用 find_info(None, 'x') 抛 AttributeError/TypeError：守卫只覆盖 info['_norm'] 索引，未覆盖 info 为非 dict 时的索引与 .get 调用。判据：函数对入参类型无守卫且被公开 CLI 路径可达。",
+      "confidence": "high",
+      "suggestion": "函数首行加 if not isinstance(info, dict): return None",
+      "status": "已关闭",
+      "reopen_count": 0,
+      "created_at": "2026-09-17T03:55:18+08:00",
+      "updated_at": "2026-09-17T04:02:56+08:00",
+      "history": [
+        {
+          "event": "new",
+          "at": "2026-09-17T03:55:18+08:00"
+        },
+        {
+          "event": "confirm",
+          "at": "2026-09-17T03:55:20+08:00",
+          "from": "提出"
+        },
+        {
+          "event": "fix_start",
+          "at": "2026-09-17T03:55:21+08:00",
+          "from": "已确认"
+        },
+        {
+          "event": "fix_submit",
+          "at": "2026-09-17T03:55:22+08:00",
+          "from": "修复中"
+        },
+        {
+          "event": "verify_pass",
+          "at": "2026-09-17T04:02:56+08:00",
+          "from": "待验证"
+        }
+      ]
+    },
+    {
+      "id": "AR-20260917-002",
+      "severity": "major",
+      "type": "边界",
+      "anchor": "scripts/f3_register.py :: is_num_text() / num_text()（数值单元格判定与写入分支）",
+      "basis": "is_num_text 接受 nan/inf/Infinity/1e400 等非有限字面量，num_text 随即写出 <v>nan</v>，openpyxl 读取即 ValueError，产物为非法 xlsx。判据：xlsx 数值单元格要求有限 IEEE754 十进制表示；非有限值无合法 XML 表示。",
+      "confidence": "high",
+      "suggestion": "判定补 math.isfinite 与有效数字位数上限；num_text 对非有限值原样返回",
+      "status": "已关闭",
+      "reopen_count": 0,
+      "created_at": "2026-09-17T03:55:18+08:00",
+      "updated_at": "2026-09-17T04:02:56+08:00",
+      "history": [
+        {
+          "event": "new",
+          "at": "2026-09-17T03:55:18+08:00"
+        },
+        {
+          "event": "confirm",
+          "at": "2026-09-17T03:55:20+08:00",
+          "from": "提出"
+        },
+        {
+          "event": "fix_start",
+          "at": "2026-09-17T03:55:21+08:00",
+          "from": "已确认"
+        },
+        {
+          "event": "fix_submit",
+          "at": "2026-09-17T03:55:22+08:00",
+          "from": "修复中"
+        },
+        {
+          "event": "verify_pass",
+          "at": "2026-09-17T04:02:56+08:00",
+          "from": "待验证"
+        }
+      ]
+    },
+    {
+      "id": "AR-20260917-003",
+      "severity": "minor",
+      "type": "边界",
+      "anchor": "scripts/f3_register.py :: parse_info() 序号列解析（str.isdigit() 真则 int() 调用）",
+      "basis": "存在 isdigit() 为真但 int() 抛 ValueError 的字符（如 '²'）。判据：Unicode 中上标数字满足 isdigit 而不满足 int() 可解析。",
+      "confidence": "high",
+      "suggestion": "抽出带异常兜底的 _as_idx()",
+      "status": "已关闭",
+      "reopen_count": 0,
+      "created_at": "2026-09-17T03:55:18+08:00",
+      "updated_at": "2026-09-17T04:02:57+08:00",
+      "history": [
+        {
+          "event": "new",
+          "at": "2026-09-17T03:55:18+08:00"
+        },
+        {
+          "event": "confirm",
+          "at": "2026-09-17T03:55:20+08:00",
+          "from": "提出"
+        },
+        {
+          "event": "fix_start",
+          "at": "2026-09-17T03:55:21+08:00",
+          "from": "已确认"
+        },
+        {
+          "event": "fix_submit",
+          "at": "2026-09-17T03:55:22+08:00",
+          "from": "修复中"
+        },
+        {
+          "event": "verify_pass",
+          "at": "2026-09-17T04:02:57+08:00",
+          "from": "待验证"
+        }
+      ]
+    },
+    {
+      "id": "AR-20260917-004",
+      "severity": "minor",
+      "type": "完整性",
+      "anchor": "tests/test_f3_name_parse.py（新回归夹具）与 scripts/ci_test.py 的检查项清单",
+      "basis": "夹具文件已落盘但 ci_test.py 无对应检查项，CI 不会执行它；判据：技能 CI 入口为 ci_test.py，未被其调用的测试无回归保护。",
+      "confidence": "high",
+      "suggestion": "ci_test.py 增加 f3 name-parse regression 检查项",
+      "status": "已关闭",
+      "reopen_count": 0,
+      "created_at": "2026-09-17T03:55:18+08:00",
+      "updated_at": "2026-09-17T04:02:57+08:00",
+      "history": [
+        {
+          "event": "new",
+          "at": "2026-09-17T03:55:18+08:00"
+        },
+        {
+          "event": "confirm",
+          "at": "2026-09-17T03:55:20+08:00",
+          "from": "提出"
+        },
+        {
+          "event": "fix_start",
+          "at": "2026-09-17T03:55:21+08:00",
+          "from": "已确认"
+        },
+        {
+          "event": "fix_submit",
+          "at": "2026-09-17T03:55:22+08:00",
+          "from": "修复中"
+        },
+        {
+          "event": "verify_pass",
+          "at": "2026-09-17T04:02:57+08:00",
+          "from": "待验证"
+        }
+      ]
+    },
+    {
+      "id": "AR-20260917-005",
+      "severity": "minor",
+      "type": "完整性",
+      "anchor": "scripts/f3_register.py :: 主循环条件化剥序号逻辑（后抽为 resolve_name）",
+      "basis": "该逻辑决定最终楼名，却无任何自动化断言；回归时只能靠人工看产物。判据：决定性行为无测试覆盖。",
+      "confidence": "high",
+      "suggestion": "抽为 resolve_name(info, name) 并在夹具中断言",
+      "status": "已关闭",
+      "reopen_count": 0,
+      "created_at": "2026-09-17T03:55:18+08:00",
+      "updated_at": "2026-09-17T04:02:57+08:00",
+      "history": [
+        {
+          "event": "new",
+          "at": "2026-09-17T03:55:18+08:00"
+        },
+        {
+          "event": "confirm",
+          "at": "2026-09-17T03:55:20+08:00",
+          "from": "提出"
+        },
+        {
+          "event": "fix_start",
+          "at": "2026-09-17T03:55:22+08:00",
+          "from": "已确认"
+        },
+        {
+          "event": "fix_submit",
+          "at": "2026-09-17T03:55:23+08:00",
+          "from": "修复中"
+        },
+        {
+          "event": "verify_pass",
+          "at": "2026-09-17T04:02:57+08:00",
+          "from": "待验证"
+        }
+      ]
+    },
+    {
+      "id": "AR-20260917-006",
+      "severity": "minor",
+      "type": "表述",
+      "anchor": "docs/CHANGELOG.md :: SK-20260917-f3fix 条目中的语料文件名计数",
+      "basis": "计数写为 129 份，未注明是去重后口径；实际 4 个语料目录共 199 个文件。判据：同一数字两种口径并存易被误读为全量。",
+      "confidence": "medium",
+      "suggestion": "改为「4 个语料目录共 199 个文件、去重后 129 个文件名」",
+      "status": "已关闭",
+      "reopen_count": 0,
+      "created_at": "2026-09-17T03:55:18+08:00",
+      "updated_at": "2026-09-17T04:02:57+08:00",
+      "history": [
+        {
+          "event": "new",
+          "at": "2026-09-17T03:55:18+08:00"
+        },
+        {
+          "event": "confirm",
+          "at": "2026-09-17T03:55:21+08:00",
+          "from": "提出"
+        },
+        {
+          "event": "fix_start",
+          "at": "2026-09-17T03:55:22+08:00",
+          "from": "已确认"
+        },
+        {
+          "event": "fix_submit",
+          "at": "2026-09-17T03:55:23+08:00",
+          "from": "修复中"
+        },
+        {
+          "event": "verify_pass",
+          "at": "2026-09-17T04:02:57+08:00",
+          "from": "待验证"
+        }
+      ]
+    },
+    {
+      "id": "AR-20260917-007",
+      "severity": "minor",
+      "type": "表述",
+      "anchor": "docs/pitfalls.md :: 本轮新增条目的编号",
+      "basis": "新增条目编号为 7/8/9，与文件内既有 1~30 冲突，按编号检索会命中两条不同内容。判据：条目编号在单文件内应唯一。",
+      "confidence": "high",
+      "suggestion": "改为接续编号 31/32/33",
+      "status": "已关闭",
+      "reopen_count": 0,
+      "created_at": "2026-09-17T03:55:18+08:00",
+      "updated_at": "2026-09-17T04:02:57+08:00",
+      "history": [
+        {
+          "event": "new",
+          "at": "2026-09-17T03:55:18+08:00"
+        },
+        {
+          "event": "confirm",
+          "at": "2026-09-17T03:55:21+08:00",
+          "from": "提出"
+        },
+        {
+          "event": "fix_start",
+          "at": "2026-09-17T03:55:22+08:00",
+          "from": "已确认"
+        },
+        {
+          "event": "fix_submit",
+          "at": "2026-09-17T03:55:23+08:00",
+          "from": "修复中"
+        },
+        {
+          "event": "verify_pass",
+          "at": "2026-09-17T04:02:57+08:00",
+          "from": "待验证"
+        }
+      ]
+    },
+    {
+      "id": "AR-20260917-008",
+      "severity": "suggestion",
+      "type": "逻辑",
+      "anchor": "scripts/f3_register.py :: find_info() 前缀兜底分支（取首个命中）",
+      "basis": "兜底取 dict 迭代首个命中项，结果受插入顺序影响，跨版本/跨数据可能静默改变匹配目标。判据：匹配结果不应依赖容器迭代顺序。",
+      "confidence": "medium",
+      "suggestion": "改为唯一命中才采用",
+      "status": "已关闭",
+      "reopen_count": 0,
+      "created_at": "2026-09-17T03:55:18+08:00",
+      "updated_at": "2026-09-17T04:02:57+08:00",
+      "history": [
+        {
+          "event": "new",
+          "at": "2026-09-17T03:55:18+08:00"
+        },
+        {
+          "event": "confirm",
+          "at": "2026-09-17T03:55:21+08:00",
+          "from": "提出"
+        },
+        {
+          "event": "fix_start",
+          "at": "2026-09-17T03:55:22+08:00",
+          "from": "已确认"
+        },
+        {
+          "event": "fix_submit",
+          "at": "2026-09-17T03:55:23+08:00",
+          "from": "修复中"
+        },
+        {
+          "event": "verify_pass",
+          "at": "2026-09-17T04:02:57+08:00",
+          "from": "待验证"
+        }
+      ]
+    },
+    {
+      "id": "AR-20260917-009",
+      "severity": "suggestion",
+      "type": "完整性",
+      "anchor": "scripts/f3_register.py :: --info 参数处理",
+      "basis": "路径不存在时静默退化为全楼 B..H 留空，用户看到的是「生成成功」而非错误。判据：输入缺失应显式失败。",
+      "confidence": "high",
+      "suggestion": "改为 SystemExit 报错",
+      "status": "已关闭",
+      "reopen_count": 0,
+      "created_at": "2026-09-17T03:55:18+08:00",
+      "updated_at": "2026-09-17T04:02:57+08:00",
+      "history": [
+        {
+          "event": "new",
+          "at": "2026-09-17T03:55:18+08:00"
+        },
+        {
+          "event": "confirm",
+          "at": "2026-09-17T03:55:21+08:00",
+          "from": "提出"
+        },
+        {
+          "event": "fix_start",
+          "at": "2026-09-17T03:55:22+08:00",
+          "from": "已确认"
+        },
+        {
+          "event": "fix_submit",
+          "at": "2026-09-17T03:55:23+08:00",
+          "from": "修复中"
+        },
+        {
+          "event": "verify_pass",
+          "at": "2026-09-17T04:02:57+08:00",
+          "from": "待验证"
+        }
+      ]
+    },
+    {
+      "id": "AR-20260917-010",
+      "severity": "suggestion",
+      "type": "表述",
+      "anchor": "scripts/f3_register.py :: 主循环内 alt 变量命名与 docs/技术设计书.md §5 与实现的同步",
+      "basis": "alt 语义不自明；实现新增的数值单元格与命名解析规则未回写设计书 §5 条目。判据：设计书 §5 为技能实现条目的权威清单。",
+      "confidence": "medium",
+      "suggestion": "重命名并补 §5 第 9/10 条",
+      "status": "已关闭",
+      "reopen_count": 0,
+      "created_at": "2026-09-17T03:55:18+08:00",
+      "updated_at": "2026-09-17T04:02:57+08:00",
+      "history": [
+        {
+          "event": "new",
+          "at": "2026-09-17T03:55:18+08:00"
+        },
+        {
+          "event": "confirm",
+          "at": "2026-09-17T03:55:21+08:00",
+          "from": "提出"
+        },
+        {
+          "event": "fix_start",
+          "at": "2026-09-17T03:55:22+08:00",
+          "from": "已确认"
+        },
+        {
+          "event": "fix_submit",
+          "at": "2026-09-17T03:55:23+08:00",
+          "from": "修复中"
+        },
+        {
+          "event": "verify_pass",
+          "at": "2026-09-17T04:02:57+08:00",
+          "from": "待验证"
+        }
+      ]
+    }
+  ]
+}

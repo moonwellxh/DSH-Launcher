@@ -1,0 +1,175 @@
+{
+  "task_id": "docx-comment-writer",
+  "entries": [
+    {
+      "name": "l0_four_layer_verify",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\l0_four_layer_verify.py",
+      "entrypoint": "main",
+      "run": "python l0_four_layer_verify.py <skill_dir> <real_fixture.docx> <workdir>",
+      "purpose": "四层确定性校验：导入/探测/技能自带自检(verify_comments+selftest)/真实 docx 端到端；不变式＝原文与产物段落文本一致、非文本 run 结构一致、时间戳为当日 UTC、源文件哈希不变。脚本只编码计算与不变式比较，不含被审对象的结论断言。",
+      "hash": "B0C35845DACB0AFA408F3246633AE721D05B04F46E7B2422A3DE9B0B9F7CF962",
+      "registered_at": "2026-09-17T03:17:00+08:00"
+    },
+    {
+      "name": "l0_lib",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\lib.py",
+      "entrypoint": "module",
+      "run": "import lib  (needs lxml)",
+      "purpose": "公共助手：sig() 生成与渲染相关的 token 流（drawing/pict/object/txbxContent 折叠为占位符，不进其内部文字）、counts() 统计 tab/br/cr/drawing/pict/t 数量、load_doc/load_part/part_names。只编码计算，无预期值。",
+      "hash": "21CE5A2759151A84C963673BBA0448910D0C73F710BC412EB155F320B02F248F",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_mkc",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\mkc.py",
+      "entrypoint": "build",
+      "run": "import mkc; mkc.build(path, body_xml, with_rels=True, extra=None, extra_ct=None, rels=None)",
+      "purpose": "从 body XML 片段构造最小合法 docx（可关掉 document.xml.rels、可注入 comments.xml/Override/自定义 rels），供合成边界用例使用。只编码构造，无预期值。",
+      "hash": "29D3B3FAE8355CBC3E183F7979DC45622A4E7F69003B11501CFC952538A016B2",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_split_run_probe",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\t_unit_split.py",
+      "entrypoint": "__main__",
+      "run": "python t_unit_split.py",
+      "purpose": "split_run 分桶与 DocMap 文本收集的输入→输出转储：20 个合成 run 用例（tab/br/drawing/rtl/ptab/多 w:t/空 w:t/边界/早退）+ 8 个 DocMap 用例（hyperlink/ins/fldSimple/sdt/文本框/嵌套表格/altChunk）。只转储，不判定。",
+      "hash": "6D629D412BF9054E540013EEA71E460C0B089791F9AD916368A9F728AF95FF8C",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_old_new_compare",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_old_new.py",
+      "entrypoint": "__main__",
+      "run": "python t_old_new.py",
+      "purpose": "同一批合成输入分别喂修复前快照(_backup\\docx-comment-writer_prefix_*)与当前引擎，转储 DocMap.text 与 split_run 结果流，用于增量对比。只转储，不判定。",
+      "hash": "6C444C53406D5F8099DAFEC7E2602E7722C566C260BF9E79AD2AE1329A8CCED1",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_integration_fixtures",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_integration.py",
+      "entrypoint": "__main__",
+      "run": "python t_integration.py",
+      "purpose": "19 个集成夹具：基线段落/跨段落/跨单元格/悬空 r:id 超链接/ins/fldSimple/sdt/文本框/重叠锚点/尾随 tab/缺 rels/同路径/空 comments.xml/正文有标记无 comments.xml/非数字 id 追加。转储 log、verify 结论、marker 父节点、内容签名与计数、残留文件，不判定。",
+      "hash": "23CFFEAA24A303C2A741F239FE01F63D8EDDED853C35AE16CFE3B19BE6B6C0CC",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_word_check",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\word_check.py",
+      "entrypoint": "__main__",
+      "run": "python word_check.py <file.docx>",
+      "purpose": "单文件 Word 16 判据（每进程只开一份，规避 COM 崩溃污染）：输出 OPEN_OK/OPEN_FAIL、Comments.Count、每条 Scope.Text。只测不判。",
+      "hash": "636D1ECF784F9F52AD80FB11568A156BF1B633E403A1C73BBB6650D50AE7E94C",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_word_batch",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_word.py",
+      "entrypoint": "__main__",
+      "run": "python t_word.py",
+      "purpose": "批量 Word 读回 + 构造两轮追加夹具 + 用 Word 本体生成带批注文档（comments/commentsExtended/commentsIds/people.xml）后追加。单实例串行，会在某份文档导致 Word 崩溃时中断。",
+      "hash": "B0DD176C997374FA8EB05848BCF94EC38BB640F996CB75097E40002F5A55C275",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_word_controls",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_word2.py",
+      "entrypoint": "__main__",
+      "run": "python t_word2.py",
+      "purpose": "Word 专属判据：(a) range 标记放进 <w:r> 内部是否真被拒；(b) 引擎产物经 Word SaveAs 往返后批注/标记是否保留；(c) Word 是否允许在页眉加批注（用于排除页眉批注假设）。",
+      "hash": "5FB24E74BC702FD6103F57AEFF6CD436DC82BF4EBBB6DC47B1AACFAA97D2E43C",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_src_validity_controls",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_control.py",
+      "entrypoint": "__main__",
+      "run": "python t_control.py",
+      "purpose": "对照实验：同一夹具的 src 与 out 分别过 Word，用来把「夹具本身非法」与「引擎改坏」区分开（首轮误判 D/P/H 三例即由此排除）。",
+      "hash": "33CC35492C72E0E1A1B3C9454A1C194708BB34BB4B0CD6F1F72D1DAE9A45103D",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_hyperlink_fixtures",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_hl.py",
+      "entrypoint": "__main__",
+      "run": "python t_hl.py  (then feed work/HL_*.docx to word_check.py)",
+      "purpose": "构造 Word 合法夹具：外链（带真实 rId 关系）/内链超链接、完整 wp:inline 文本框、w:ins、行内 w:sdt；转储 marker 父节点与内容签名。",
+      "hash": "A76B3269DEC5F676B1D20E2EFFD06665168AD638945052E47A13A5B99BA1FDDF",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_cross_container",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_xc.py",
+      "entrypoint": "__main__",
+      "run": "python t_xc.py  (then feed work/XC_*.docx to word_check.py)",
+      "purpose": "跨容器区间：超链接↔正文、ins↔正文、fldSimple↔sdtContent 五种起止组合，转储 marker 父节点；配 word_check.py 取 Word 判据。",
+      "hash": "92A9E6A6299DBA0416473474CA43FA3B918D29DCD087C64B3FAF3049C372B785",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_cross_boundary_geometry",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_cross.py",
+      "entrypoint": "__main__",
+      "run": "python t_cross.py  (then feed work/XR_*.docx to word_check.py)",
+      "purpose": "跨行/单元格→正文/正文→单元格/嵌套表格/隐式跨段/occurrence 越界 六例的范围几何转储，外加两次失败中途注入（坏 [Content_Types].xml / 坏 document.xml）验证原子替换与临时目录清理。",
+      "hash": "445A1EBCD3AF0D1CE17D3558C75619B036C481EF285382F6F33131A64A91A4B3",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_checker_robustness",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_misc.py",
+      "entrypoint": "__main__",
+      "run": "python t_misc.py  (after t_integration.py)",
+      "purpose": "verify_comments 自身的鲁棒性探针：无 comments.xml / 空 comments.xml / 缺 document.xml.rels / 有标记无批注；dump_text 同路径保护；缺 rels 产物里关系与 Content_Types 是否补上；重叠锚点真实几何；非数字 id 的 declared/marked 差异。",
+      "hash": "2D55239F880B519067C44750EBE0BE0488E90099C315A433CAA2EB47556D714D",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_real_material",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_real.py",
+      "entrypoint": "__main__",
+      "run": "python t_real.py",
+      "purpose": "真实素材端到端（洪泽湖现场记录表，只读源）：部件清单、结构计数、dump_text、写批注、verify、内容签名比对；并用修复前快照重放「对已有批注文档再跑一次」以确认原缺陷真实存在。",
+      "hash": "453520E753B2E2CE591E64E13C0E4CFD929E69F6B798680BA51D0C5CC84B33B5",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_rich_doc_fidelity",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_rich.py",
+      "entrypoint": "__main__",
+      "run": "python t_rich.py  (needs Word COM to build the fixture)",
+      "purpose": "用 Word 本体造富文档（页眉/页脚/脚注/文本框/表格/Word 自带批注），过引擎后比对内容签名、元素计数、页眉页脚部件字节，并确认文本框文字不进锚点空间。",
+      "hash": "98061B507C0250C46D33F9CE40DF62CCEBDB3966F6467D13847A686E3F6F33F9",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    },
+    {
+      "name": "l0_textbox_count",
+      "ns": "code",
+      "code_path": "C:\\\\Users\\\\雍远\\\\.agents\\\\skills\\\\adversarial-review\\\\var\\\\task-scripts\\\\docx-comment-writer\\\\iter2\\\\t_txbox.py",
+      "entrypoint": "__main__",
+      "run": "python t_txbox.py  (after t_rich.py)",
+      "purpose": "在真实 Word 产出（同时含 w:drawing 与 w:pict 两份文本框）上，对比修复前后 dump_text 中文本框文字的重复计数与 locate 结果。",
+      "hash": "ADEB09F7D47F0A32693BA2086EB8746A343F38A9FFE430F147F881377AB18D5F",
+      "registered_at": "2026-09-17T04:20:00+08:00"
+    }
+  ]
+}
