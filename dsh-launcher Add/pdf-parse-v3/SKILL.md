@@ -1,7 +1,7 @@
 ---
 name: pdf-parse-v3
 description: PDF 解析与结构化 JSON（先分诊后选引擎：文本层→版式坐标，扫描→RapidOCR/WinRT；再按 Schema v3.0 拆章节/条文/表图并溯源）。v4.0 管线：任意 PDF → 可溯源结构化 JSON（网格表格+图片索引）+ 附件图片库，全自动、失败诚实标记、成本可预算。触发词：读 PDF/PDF 是扫描件吗/规范 PDF/扫描 PDF/OCR 识别/标准条文/PDF 转 JSON/分章节分条文/文字版 PDF/PDF 版式/坐标/字体提取。
-version: 2.0.0
+version: 2.0.2
 ---
 
 # pdf-parse-v3：PDF 解析 → 结构化（Schema v3.0 / v4.0）JSON
@@ -69,7 +69,7 @@ python assets\finalize_v3.py out_v3.json report.json   # A3/A6 质检 + 抽样�
 
 ## 5) 与其他技能协作
 - 查标准状态/编号 → **`std-official-search`**；其 openstd 图档页图下载后可用本技能 render/OCR 解析。
-- 测试：`tests\run-tests.ps1` 四层自测 23 项（语法/环境/check-env/layout/rapid/结构化，离线全绿；官方源实网冒烟在 std-official-search）。
+- 测试：`tests\run-tests.ps1` 四层自测 32 项（语法/环境/check-env/layout/rapid/结构化，离线全绿；官方源实网冒烟在 std-official-search）。
 - 输出规范：内置 `docs\PDF解析输出JSON规范.md`。拆分自原 `gb-standard-direct`（2026-09）。
 
 ## 6) 经验与踩坑速查（实测沉淀）
@@ -78,6 +78,8 @@ python assets\finalize_v3.py out_v3.json report.json   # A3/A6 质检 + 抽样�
 - **长任务纪律**：进度读磁盘产物，不依赖后台回传；checkpoint 文件即真相。
 - **分诊阈值**：文本页=可读率≥50% 且 ≥5 可读字符（封面/标题短页仍走文本直抽）；可读率<30% 判伪文本层按 OCR。
 - **结构解析启发式**：目录页按"一页≥3 个章行"整体剔除；条文号须匹配当前章号前缀（防表格数字行误判）；拆条失败留 `pages[].text` 不强行拆（A1）。
+- **条文号分隔符口径**（2026-09-19）：`clean_line` 只折 `. ． · ‧ ∙ ⋅`；**不折 `, ，、`**——实测折逗号/顿号会造出假条文（`5、6 项说明`→条文 `5.6`、`1，234 件设备`→`1.234`）。WinRT 把小数点认成 `，` 的情形在 `winrt-ocr.ps1` 内局部归一化（仅行首「数字，1–2 位数字」）。
+- **页脚页码形态规则**（2026-09-19）：`RE_PAGER` 剔除 `第N页(共M页)` 与 `- N -`（逐页变化，L71 重复计数永远抓不到）；**不认 `N/M`**（真实语料有裸行 `687/891` 是表格数据）。
 - **pypdf 加密坑**：锁态访问页抛 `FileNotDecryptedError` → 先探测 encrypted/locked 再优雅报错。
 - **夹具先验**：手造测试 PDF 的 XObject 引用号/结构必须先自检——坏夹具曾造成"OCR 全空"假警报（先验夹具再判产品缺陷）。
 - **编码铁律**：含中文 .ps1 必须 UTF-8 BOM（PS5.1 无 BOM 按 GBK 解析即炸）；数据文件统一 UTF-8。

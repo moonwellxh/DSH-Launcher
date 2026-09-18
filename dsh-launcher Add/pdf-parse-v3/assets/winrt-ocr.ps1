@@ -90,11 +90,24 @@ function New-OcrEngine {
   return [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
 }
 
+function Normalize-WinRtText([string]$text) {
+  # WinRT zh-Hans OCR sometimes renders a decimal point as a FULL-WIDTH comma
+  # (U+FF0C): it reads "1.1" as "1" + U+FF0C + "1". pdf2v3.py's common normalizer
+  # deliberately does NOT fold commas (folding them mints bogus articles), so the
+  # OCR channel folds exactly the line-initial number + U+FF0C + 1-2 digit form;
+  # mid-line list separators and thousands groups (1 + U+FF0C + 234) stay untouched.
+  # ASCII comma is NOT handled here (this channel emits U+FF0C), and the pattern uses
+  # [^\S\r\n] instead of \s so a leading newline is never swallowed.
+  if ([string]::IsNullOrEmpty($text)) { return $text }
+  return [regex]::Replace($text, '(?m)^([^\S\r\n]*\d{1,4})[^\S\r\n]*，[^\S\r\n]*(?=\d{1,2}(?!\d))', '$1.')
+}
+
 function Ocr-Bitmap($engine, $softwareBitmap) {
   $res = AwaitOp ($engine.RecognizeAsync($softwareBitmap)) ([Windows.Media.Ocr.OcrResult])
   $sb = New-Object System.Text.StringBuilder
   foreach ($line in $res.Lines) { [void]$sb.AppendLine($line.Text) }
-  return $sb.ToString().TrimEnd("`r", "`n")
+  $text = $sb.ToString().TrimEnd("`r", "`n")
+  return Normalize-WinRtText $text
 }
 
 function Ocr-ImageFile($engine, [string]$path) {

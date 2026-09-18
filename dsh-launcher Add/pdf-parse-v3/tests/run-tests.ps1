@@ -42,6 +42,33 @@ if ($wbpy) {
   Report 'py_compile pdf_text_probe' ($LASTEXITCODE -eq 0)
 } else { ReportSkip 'py_compile' 'python not found' }
 
+# WinRT channel-local OCR text normalization. The function body is extracted from
+# winrt-ocr.ps1 source via AST so the assertions exercise the real code, not a copy.
+$wrt = Join-Path $assets 'winrt-ocr.ps1'
+try {
+  $wtok = $null; $werr = $null
+  $wast = [System.Management.Automation.Language.Parser]::ParseFile($wrt, [ref]$wtok, [ref]$werr)
+  $wfn = $wast.Find({ param($n) ($n -is [System.Management.Automation.Language.FunctionDefinitionAst]) -and ($n.Name -eq 'Normalize-WinRtText') }, $true)
+  if (-not $wfn) { Report 'winrt normalize: function present' $false 'Normalize-WinRtText not found' }
+  else {
+    . ([scriptblock]::Create($wfn.Extent.Text))
+    $fw = [string][char]0xFF0C
+    $dh = [string][char]0x3001
+    Report 'winrt normalize: line-start comma folded' ((Normalize-WinRtText ('1' + $fw + '1 title')) -eq '1.1 title')
+    Report 'winrt normalize: mid-line comma kept' ((Normalize-WinRtText ('total 1' + $fw + '2 units')) -eq ('total 1' + $fw + '2 units'))
+    Report 'winrt normalize: thousands guarded' ((Normalize-WinRtText ('1' + $fw + '234 items')) -eq ('1' + $fw + '234 items'))
+    Report 'winrt normalize: dun-hao kept' ((Normalize-WinRtText ('1' + $dh + '1 title')) -eq ('1' + $dh + '1 title'))
+    # wiring: Ocr-Bitmap must actually call the normalizer (a call removed by accident
+    # would otherwise leave every assertion above green - found by adversarial review)
+    $wfnOcr = $wast.Find({ param($n) ($n -is [System.Management.Automation.Language.FunctionDefinitionAst]) -and ($n.Name -eq 'Ocr-Bitmap') }, $true)
+    $wcmd = @()
+    if ($wfnOcr) {
+      $wcmd = @($wfnOcr.FindAll({ param($a) $a -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() })
+    }
+    Report 'winrt normalize: wired into Ocr-Bitmap' ((($null -ne $wfnOcr)) -and ($wcmd -contains 'Normalize-WinRtText'))
+  }
+} catch { Report 'winrt normalize' $false $_.Exception.Message }
+
 # ---------- L2: environment ----------
 $pyOk = $false
 if ($wbpy) { & $wbpy -c "import pypdf" 2>$null; $pyOk = ($LASTEXITCODE -eq 0) }
@@ -163,8 +190,7 @@ if ($wbpy) {
 
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 # tidy: python compiles pyc next to sources when tests run
-Get-ChildItem (Join-Path $skill 'assets') -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
-Get-ChildItem (Join-Path $skill 'tests') -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+Get-ChildItem $skill -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 Write-Output ("RESULT pass={0} fail={1} skip={2}" -f $pass, $fail, $skip)
 if ($fail -gt 0) { exit 1 }
 exit 0

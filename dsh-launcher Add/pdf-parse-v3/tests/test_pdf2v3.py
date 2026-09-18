@@ -133,10 +133,85 @@ def toc_page_fixture():
     check("toc page: flagged in issues", len(issues) >= 1, str(issues))
 
 
+def separator_and_footer_fixtures():
+    """Regression for the two OCR-noise defects fixed 2026-09-19.
+    (1) RE_NUM_DOT folds OCR separator forms (. ． · ‧ ∙ ⋅) but must NOT
+        fold comma / full-width comma / dun-hao: folding those mints bogus articles
+        (5、6 项说明 -> 5.6 ; 1，234 件设备 -> 1.234).
+    (2) page-number footers that vary per page (第N页 共M页, - N -) must be dropped;
+        N/M must NOT be dropped (real corpus has a bare table-data line 687/891)."""
+    from pdf2v3 import clean_line, RE_ARTICLE_A, RE_ARTICLE_B
+    std3 = {"name": "T", "code": "T-3", "year": 2020,
+            "document_class": "normative_standard", "type": "正文（OCR提取）"}
+    # (1a) mid-dot forms become articles (chapter number matches the prefix)
+    pages = [(1, ["第一章 总则", "1.1 设备参数"]),
+             (2, ["第二章 术语", "2 · 1 术语说明"]),
+             (3, ["第三章 防火分区", "3‧1 验收资料清单"])]
+    cleaned = drop_global_noise(pages)
+    doc, _ = build_v3(cleaned, std3, "unit", [])
+    nums = [a["article_number"] for a in doc["articles"]]
+    check("sep: mid-dot headings become articles", nums == ["1.1", "2.1", "3.1"], str(nums))
+    # (1b) comma / dun-hao are NOT folded at all
+    for ln in ["1，1 设备参数", "1,1 设备参数", "1、1 设备参数"]:
+        c = clean_line(ln)
+        check("sep: not folded %s" % ln,
+              not (RE_ARTICLE_A.match(c) or RE_ARTICLE_B.match(c)), repr(c))
+    # (1c) and they must not mint articles even when the chapter prefix matches
+    pages = [(1, ["第五章 安全疏散", "5，6 项说明", "5、6 项说明"])]
+    cleaned = drop_global_noise(pages)
+    doc, _ = build_v3(cleaned, std3, "unit", [])
+    nums = [a["article_number"] for a in doc["articles"]]
+    check("sep: comma/dun-hao mint no articles", nums == [], str(nums))
+    # (2a) per-page-varying page footers are dropped
+    foot = [(1, ["第 1 页 共 3 页", "正文一"]),
+            (2, ["第 2 页 共 3 页", "正文二"]),
+            (3, ["第 3 页 共 3 页", "正文三"])]
+    out = drop_global_noise(foot)
+    check("footer: 第N页共M页 dropped",
+          all(len(ls) == 1 and ls[0].startswith("正文") for _, ls in out), str(out))
+    foot2 = [(1, ["- 12 -", "正文一"]), (2, ["第2页", "正文二"]),
+             (3, ["— 3 —", "正文三"])]
+    out2 = drop_global_noise(foot2)
+    check("footer: - N - / 第N页 dropped",
+          all(len(ls) == 1 and ls[0].startswith("正文") for _, ls in out2), str(out2))
+    # (2b) look-alikes must survive
+    keep = ["687/891", "3/4", "2026/9", "2026", "4000", "第 3 章 厂房",
+            "2. 煤、焦炭、油母页岩的筛分、转运工段"]
+    pages = [(1, ["第一章 总则", "1.1 一般规定"] + keep)]
+    got = drop_global_noise(pages)[0][1]
+    flat = [x.replace(" ", "") for x in got]
+    for s in keep:
+        check("keep: %s survives" % s, s.replace(" ", "") in flat, str(got))
+    # (2c) identical repeated lines must still be dropped (L71 not regressed)
+    same = [(1, ["某某规范", "正文一"]),
+            (2, ["某某规范", "正文二"]),
+            (3, ["某某规范", "正文三"])]
+    out3 = drop_global_noise(same)
+    check("footer: identical repeated line still dropped",
+          all(len(ls) == 1 for _, ls in out3), str(out3))
+    # (2d) L71 threshold pinned from BOTH sides (n=4 pages -> threshold 3)
+    l71 = [(1, ["\u91cd\u590d\u884c", "\u6b63\u6587\u4e00", "\u53ea\u51fa\u73b0\u4e24\u6b21"]),
+           (2, ["\u91cd\u590d\u884c", "\u6b63\u6587\u4e8c", "\u53ea\u51fa\u73b0\u4e24\u6b21"]),
+           (3, ["\u91cd\u590d\u884c", "\u6b63\u6587\u4e09"]),
+           (4, ["\u6b63\u6587\u56db"])]
+    kept71 = [x for _, ls in drop_global_noise(l71) for x in ls]
+    check("L71: 3-of-4 repeated line dropped", "\u91cd\u590d\u884c" not in kept71, str(kept71))
+    check("L71: 2-of-4 line survives (threshold not weakened)",
+          "\u53ea\u51fa\u73b0\u4e24\u6b21" in kept71, str(kept71))
+    # (2e) L85 bare-number rule still drops 1-3 digits, still keeps 4 digits
+    l85 = [(1, ["1", "\u6b63\u6587\u4e00"]), (2, ["999", "\u6b63\u6587\u4e8c"]),
+           (3, ["1000", "\u6b63\u6587\u4e09"])]
+    kept85 = [x for _, ls in drop_global_noise(l85) for x in ls]
+    check("L85: bare 1-3 digit still dropped",
+          "1" not in kept85 and "999" not in kept85, str(kept85))
+    check("L85: 4-digit value still kept", "1000" in kept85, str(kept85))
+
+
 if __name__ == "__main__":
     synthetic()
     adversarial_fixtures()
     toc_page_fixture()
+    separator_and_footer_fixtures()
     load_parts_fixture()
     if FAILS:
         print("RESULT fail=%d" % len(FAILS))

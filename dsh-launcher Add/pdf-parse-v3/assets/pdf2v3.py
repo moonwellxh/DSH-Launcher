@@ -37,10 +37,19 @@ _BOTH = CJK + CJK_PUNCT
 RE_CJK_SPACE = re.compile(
     r'(?<=[%s])[ \t]+(?=[%s])' % (_BOTH, _BOTH)
 )
-RE_NUM_DOT = re.compile(r'(?<=\d)\s*([.．])\s*(?=\d)')  # 3 . 2 . 1 -> 3.2.1
+RE_NUM_DOT = re.compile(r'(?<=\d)\s*([.．·‧∙⋅])\s*(?=\d)')  # 3 . 2 . 1 -> 3.2.1（含 OCR 中点误认；不含逗号/顿号，会造条，见 tests）
 RE_HDR_SEP = re.compile(r'^[\s\-—_=~*·•.。]+$')
 RE_WATERMARK = re.compile(r'(zaojiazhe|造价者|广告|推广|网\s*www|\.com|\.cn|告\s*者|亻\s*介)',
                           re.IGNORECASE)
+
+
+# page-number footers that vary per page (the L71 repetition threshold can never
+# catch them): 第 N 页 共 M 页 / 第N页 / - N - / — N —.
+# Deliberately NOT N/M: the real corpus has a bare table-data line 687/891 (see tests).
+RE_PAGER = re.compile(
+    r'^(?:[-–—\[(（]?\s*第\s*\d{1,4}\s*[页頁]\s*(?:共\s*\d{1,4}\s*[页頁])?\s*[-–—\])）]?'
+    r'|[-–—]\s*\d{1,4}\s*[-–—])$'
+)
 
 
 def clean_line(line):
@@ -83,6 +92,8 @@ def drop_global_noise(pages_lines):
             if RE_HDR_SEP.match(c):
                 continue
             if re.fullmatch(r'\d{1,3}', c):  # bare page numbers
+                continue
+            if RE_PAGER.match(re.sub(r'\s+', '', c)):  # 逐页变化的页码页脚
                 continue
             kept.append(c)
         out.append((pno, kept))
