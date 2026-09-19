@@ -329,6 +329,15 @@ function Publish-SkillZip {
     } finally { $zip.Dispose() }
     return $true
 }
+function Get-ZipEntryList {
+    # 一致性守卫用（2026-09-19 审查 S1/S2）：条目名 + 解压后大小，用于比较「主树内嵌配套包 vs releases 同版包」是否同内容
+    param([string]$ZipPath)
+    try {
+        $z = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+        try { return (($z.Entries | Sort-Object FullName | ForEach-Object { "$($_.FullName)|$($_.Length)" }) -join "`n") }
+        finally { $z.Dispose() }
+    } catch { return '' }
+}
 function Get-SyncLock {
     $lockDir = Join-Path $env:USERPROFILE '.dsh\gh-sync'
     New-Item -ItemType Directory -Path $lockDir -Force | Out-Null
@@ -598,7 +607,8 @@ function Sync-LauncherScript {
             Write-SyncStatus 'result' "已从 GitHub 更新启动脚本（$($rm.version)）。" @{ action = 'pulled'; version = [string]$rm.version }
         } elseif ($chosenDirection -eq 'upload' -or ($Direction -eq 'auto' -and $lp -gt $rp)) {
                 # 配套技能内嵌 zip 自动刷新（已装目录 → 主树 assets\配套技能\，保证发布主包内嵌一致）
-            foreach ($c in $compState.refresh) {
+            # 2026-09-19（审查 S1/S2）：改为对**全部**配套无条件重建。原按「本机版本 ≠ 内嵌版本」门控，且三方版本相等时直接 continue，导致「只改内容、未 bump 版本」的配套（pdf-parse-v3 去本机路径、adversarial-review 内容增长）内嵌包永不刷新，成品包长期发旧件；且旧件与新件 _meta 版本相同时引擎连分叉都检测不到。
+            foreach ($c in $script:CompanionSkills) {
                 $instDir = Join-Path $env:USERPROFILE ".agents\skills\$c"
                 $emb = Join-Path $SkillDir "assets\配套技能\$c`__skillhub.zip"
                 if (Test-Path -LiteralPath $instDir) {
@@ -655,6 +665,16 @@ function Sync-LauncherScript {
             foreach ($p in $published) {
                 $zp = Join-Path $releaseDir ($p + '__skillhub.zip')
                 try { $z = [System.IO.Compression.ZipFile]::OpenRead($zp); $z.Dispose() } catch { throw "打包校验失败（$p）：$($_.Exception.Message)" }
+            }
+            # 一致性守卫（2026-09-19，审查 S1/S2）：每个配套的「主树内嵌包」必须与同版 releases 包内容一致；不一致则告警（不阻断上传，避免因单个配套异常卡住发布）。
+            foreach ($c in $script:CompanionSkills) {
+                $embZ = Join-Path $SkillDir "assets\配套技能\$c`__skillhub.zip"
+                $relZ = Join-Path $releaseDir ($c + '__skillhub.zip')
+                if ((Test-Path -LiteralPath $embZ) -and (Test-Path -LiteralPath $relZ)) {
+                    if ((Get-ZipEntryList $embZ) -ne (Get-ZipEntryList $relZ)) {
+                        Write-SyncStatus 'warning' "内嵌配套包与 releases 包内容不一致：$c（请检查 assets\配套技能 是否已刷新）"
+                    }
+                }
             }
             $sizeGate = Get-OversizeSyncFile -Root $ghCache
             if ($sizeGate.Ignored.Count -gt 0) {
