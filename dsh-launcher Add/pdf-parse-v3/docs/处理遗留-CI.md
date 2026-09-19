@@ -8,7 +8,7 @@
 | 定位 | ★ 门证据汇总：一键运行器结果 + 防假绿灯负向 + 真实样件复验 + 诚实声明；阻断/严重清零后进 Step 9 |
 
 ## 1. 一键运行器（复跑命令，零网络）
-- 命令（技能根）：`C:\Users\雍远\AppData\Local\Programs\Python\Python312\python.exe tests\v4\ci_all.py`
+- 命令（技能根）：`C:\Users\<用户名>\AppData\Local\Programs\Python\Python312\python.exe tests\v4\ci_all.py`
 - 结果（2026-09-09）：**TOTAL pass=155 fail=0，RESULT CI ALL_GREEN（rc=0）**；compile py=16 bad=0；doc-consistency ok=True。
 - 逐套：test_ms1_smoke 43 / test_ms2_replay 15 / test_ms3_ladder 11 / test_ms5_acceptance 8 / test_triage 12 / test_render 17 / test_orchestrator_pdf 49（fail 均 0）。
 - 断言增长对账：155 − 114（基线）= **41**（落在步 5 预估 +40~60）；文件级核对入 `处理遗留-基线快照.md` C 节。

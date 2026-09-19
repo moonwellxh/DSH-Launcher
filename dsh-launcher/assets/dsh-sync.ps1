@@ -137,6 +137,8 @@ function Is-SyncIgnored {
     # 分发安全红线（2026-08-30）：机器特定文件与一切凭证类文件一律不进打包/上传/下载——
     # 即使误把 config.json / credentials / .dsh / *.token 放进技能目录，也会被这里拦下，绝不外泄。
     param([string]$Rel)
+    # 运行期留痕目录 var/（2026-09-19 用户裁决）：adversarial-review 等技能的 var/ 存放本机审查快照/台账/任务脚本（曾把 archify-install 的 patch-docs-*.ps1 与含本机用户名的路径带进 releases 提交）。这类状态属「每台机器各自的运行期产物」，不进包、不进源树；技能脚本按三级回落自建目录，故新机器缺 var/ 不影响可用。备案：var/registry/guide-clauses.json（沉淀条款）也因此不再跨机传播——如需跨机共享条款，改成只排除 var/ 下的 task-scripts|backup|snapshots|tmp|queue。
+    if ($Rel -match '(^|[\\/])var[\\/]') { return $true }
     if ($Rel -in @('install-dir.txt', 'assets/install-dir.txt')) { return $true }
     if ($Rel -match '(^|/)(config\.json|credentials[^/]*|\.dsh[^/]*|[^/]*\.token[^/]*)$') { return $true }
     # 重型测试语料（2026-09-12）：pdf-parse-v3 的 tests/vision_shootout（385 文件 / 138.8 MiB，含
@@ -150,6 +152,7 @@ function Test-SyncPurgePath {
     # 清理用谓词（2026-09-12）：这些路径在仓库源树里『不允许存在』，历史遗留必须删除。
     # 与 Is-SyncIgnored（只阻止复制、不负责清理）分开，避免误删其它合法的被忽略文件。
     param([string]$Rel)
+    if ($Rel -match '(^|[\\/])var[\\/]') { return $true }   # 2026-09-19：历史遗留的 var/ 留痕从仓库源树清除
     if ($Rel -match '(^|[\\/])tests[\\/]vision_shootout[\\/]') { return $true }
     return $false
 }

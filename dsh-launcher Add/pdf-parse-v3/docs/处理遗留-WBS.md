@@ -34,8 +34,8 @@
 ### N0 基线复跑与冻结记录（前置，无产物代码）
 - 产物：基线快照文件 `docs/处理遗留-基线快照.md` 仅 A/B/C 三节（A 步 7 前基线 / B R-13 对账 N4.4 / C Step 8 CI 总数基线）；**节点执行记录独立于快照**，落 `docs/处理遗留-节点执行记录.md`（每节点时间戳+命令+输出摘要），防污染 A 节 pre 基准（N-3 收口）。
 - 自验（含完整命令与模板）：
-  - `C:\Users\雍远\AppData\Local\Programs\Python\Python312\python.exe tests\v4\ci_all.py`（工作目录=技能根）→ rc=0；节 A 记：RESULT TOTAL 行、各套件 pass 计数、doc-consistency ok/details、compile bad=0；
-  - `C:\Users\雍远\AppData\Local\Programs\Python\Python312\python.exe D:\DeepSeekS\My Coding\_pdfv3_r13_pre\baseline_acceptance.py` → **记录协议（N-4 收口）**：脚本 JSON 部分字段（accepted/hard 五项 detail/tables_total）+ 末行 STATUS_COUNTS dict 一并转录节 A（diff 输入协议=pre/post 两节同字段表格逐键比较）。
+  - `C:\Users\<用户名>\AppData\Local\Programs\Python\Python312\python.exe tests\v4\ci_all.py`（工作目录=技能根）→ rc=0；节 A 记：RESULT TOTAL 行、各套件 pass 计数、doc-consistency ok/details、compile bad=0；
+  - `C:\Users\<用户名>\AppData\Local\Programs\Python\Python312\python.exe D:\<工作区>\My Coding\_pdfv3_r13_pre\baseline_acceptance.py` → **记录协议（N-4 收口）**：脚本 JSON 部分字段（accepted/hard 五项 detail/tables_total）+ 末行 STATUS_COUNTS dict 一并转录节 A（diff 输入协议=pre/post 两节同字段表格逐键比较）。
 - 依赖：步 5 冻结。执行体：本机 Python 3.12。
 
 ### N1 编排单点簇（orchestrator/defect_ladder/test_orchestrator_pdf/test_ms1_smoke/test_ms3_ladder）
