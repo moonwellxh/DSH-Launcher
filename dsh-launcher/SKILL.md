@@ -78,7 +78,7 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
   绝不覆盖既有指令；重复运行 setup.ps1 不产生重复条目。
 - **更新规则正文**：改 `assets\setup.ps1` 内 `Install-GeneralMemoryRule0` 的规则文本后，
   对已写入过的机器需删除 AGENTS.md 中旧规则块再重跑 setup.ps1（或手工同步 AGENTS.md）。
-- **本机两处同源**：本技能内嵌的规则文本与已写入的 AGENTS.md 内容一致，以本技能为准。
+- **内嵌文本与 AGENTS.md 的关系（2026-09-22 已同步）**：`setup.ps1` 内嵌的 `$ruleBlock` 已同步为现行规则 0（含节号 `## 1 ` 与末句括注「（平台系统约束除外，见第 5 节）」），与已写入的 `AGENTS.md` 的规则 0 段逐字一致（块内容口径：不含 here-string 结构性首尾空行）；权威仍以 `AGENTS.md` 为准（每次会话注入的生效文件）。注意：该内嵌块用于**新建** AGENTS.md 的机器，末句括注中的「见第 5 节」在仅有规则 0 的新文件里暂无指向，随通用记忆扩充后自然成立。
 
 ## 探测逻辑（AI 需知）
 
@@ -342,6 +342,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.1.92 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **规则 0 payload 同步为现行形态**（2026-09-22，AGENTS.md 合并收口）：① `setup.ps1` 内嵌 `$ruleBlock` 由「旧标题 + 全项加粗 + 无末句括注」同步为**现行规则 0**（`## 1 规则 0（最高优先强制项）…`，末句含「（平台系统约束除外，见第 5 节）」），`$ruleMarker` 同步更新——新机写入的 AGENTS.md 与主文件规则 0 段逐字一致（块内容口径：不含 here-string 结构性首尾空行）；② `SKILL.md` 的「本机两处同源…以本技能为准」改为止于事实的「已同步…权威仍以 AGENTS.md 为准」，并注明新建机器上「见第 5 节」暂无指向；③ 行为三态实测（新建写入／已同步跳过／缺规则 0 追加）＋ PS 5.1 语法检查通过。本轮发布到 `releases\v1.1.92\`。 |
 | dsh-launcher（一键启动本体） | 1.1.91 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **修复内嵌配套包长期发旧件**（2026-09-19，审查 S1/S2）：① `dsh-sync.ps1` 的内嵌刷新由「本机版本 ≠ 内嵌版本」门控改为**对全部配套无条件重建**——原先「只改内容、未 bump 版本」的配套（pdf-parse-v3 去本机路径、adversarial-review 内容增长）内嵌包永不刷新，成品包长期发旧件，且旧件与新件 `_meta` 版本相同时引擎连分叉都检测不到；② 新增发布后一致性守卫（内嵌包 vs releases 包的条目名+大小，不一致即 warning）；③ 配套版本：pdf-parse-v3 **1.2.4**（去本机绝对路径 20 处）、adversarial-review `_meta` **0.1.0→0.1.2**（与其 SKILL.md frontmatter 对齐，消除自相矛盾）。本轮发布到 `releases\v1.1.91\`。 |
 | dsh-launcher（一键启动本体） | 1.1.90 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **运行期留痕不再随包分发 + 发布物去本机路径**（2026-09-19）：① `dsh-sync.ps1` 的 `Is-SyncIgnored` 与 `Test-SyncPurgePath` 新增 `var/` 规则——各技能 `var/`（审查快照/台账/任务脚本）属每台机器各自的运行期产物，不进包/不进源树，并从仓库源树清除历史遗留；技能脚本按三级回落自建目录，新机器缺 `var/` 不影响可用（备案：`var/registry/guide-clauses.json` 沉淀条款也因此不再跨机传播）。② 清理 `pdf-parse-v3` 发布物内的本机绝对路径（`C:\Users\<用户名>` 等 20 处，均在文档/prompt 中）。③ 本轮起发布到新版本目录 `releases\v1.1.90\`（不再原地重写旧版本目录）。 |
 | dsh-launcher（一键启动本体） | 1.1.89 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **托盘全面适配 DSH 0.1.5-rc.1**（2026-09-12，本机实测）：① `Invoke-DshRpc` 改用斜杠端点（`session/list` 等）+ `{args:{<形参名>}}` 信封 + 启动令牌换浏览器认证 cookie（401 自动重登一次；令牌变化=服务重启过则自动重登）；② `session.models` → `session/modelCatalog`，并按新目录形状取值（`default` / `groups[].models[].reasoning?`）；③ `session/prompt` 补必填 `requestId`；④ 「打开 Web UI」/托盘双击/就绪后自动开浏览器一律走带令牌入口 `?token=…`（0.1.5 起裸 URL 无 cookie 直接 401），PWA 冷启动在带令牌时优先 `--app=URL`；⑤ 就绪探测统一为「端口在监听 + 日志已打印启动行 + 带认证 cookie 的 GET / 恰好 200」，两条分支同口径，不再把 401 当已就绪（读不到令牌时一次性气泡提示 + 30 秒兜底）；⑥ `setup.ps1` 的规则 0 幂等判据改为兼容两种标题形态的正则（`## 1 规则 0（…）` 与 `## 规则 0 —— …`），否则每次跑 setup 都重复追加 `~/.dsh/AGENTS.md`；⑦ 新增补丁 `dsh-frontend-static-no-store`（no-store/immutable/no-cache+ETag，注册进清单并已应用）与 `dsh-recycle-bin-restore-v2`（档案柜恢复半边）。实测：扩展冒烟 14/14 PASS + 令牌/就绪 8/8 PASS |
