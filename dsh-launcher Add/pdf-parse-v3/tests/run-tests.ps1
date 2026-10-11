@@ -178,7 +178,7 @@ if ($wbpy) {
   $reqOk = $false
   & $wbpy -c "import requests" 2>$null; $reqOk = ($LASTEXITCODE -eq 0)
   if ($reqOk) {
-    foreach ($vt in @('test_ms1_smoke.py','test_ms2_replay.py','test_ms3_ladder.py','test_ms5_acceptance.py')) {
+    foreach ($vt in @('test_ms1_smoke.py','test_ms2_replay.py','test_ms3_ladder.py','test_ms5_acceptance.py','test_concurrency.py','test_fix_falsifiability.py','test_budget_confirm.py')) {
       $mout = & $wbpy (Join-Path $skill "tests\v4\$vt") 2>&1 | Out-String
       Report ("v4 " + $vt) (($mout -match 'RESULT pass=\d+ fail=0'))
       if ($mout -match 'FAILED:') { $mout -split "`n" | Where-Object { $_ -match '^\[FAIL\]' } | Select-Object -First 8 | ForEach-Object { Write-Output ('    ' + $_) } }

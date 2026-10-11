@@ -18,7 +18,8 @@ TESTS = Path(__file__).resolve().parent
 
 SUITES = ["test_ms1_smoke.py", "test_ms2_replay.py", "test_ms3_ladder.py",
           "test_ms5_acceptance.py", "test_triage.py", "test_render.py",
-          "test_orchestrator_pdf.py"]
+          "test_orchestrator_pdf.py", "test_concurrency.py",
+          "test_fix_falsifiability.py", "test_budget_confirm.py"]
 
 PY = sys.executable
 

@@ -125,7 +125,8 @@ if ($Restore) {
         }
         Write-Host "  还原补丁：$($p.id)（$($p.name)）"
         if ($CheckOnly) { continue }   # CheckOnly：只列出计划，不真正还原
-        $env:DSH_PATCH_BACKUP_DIR = Join-Path $BackupRoot $p.id
+        $env:DSH_PATCH_BACKUP_DIR = [IO.Path]::GetFullPath((Join-Path $BackupRoot $p.id))
+        $env:DSH_PATCH_BACKUP_ROOT = [IO.Path]::GetFullPath($BackupRoot)
         $env:DSH_PATCH_PROFILE_DIR = $ProfileDir
         try {
             # 清零上游残留的 $LASTEXITCODE（如 setup.ps1 同会话调用时上游 cmd 的退出码），
@@ -182,7 +183,8 @@ foreach ($p in $patches) {
     if ($p.description) { Write-Host "    $($p.description)" -ForegroundColor DarkGray }
     if ($p.requiresRestart) { Write-Host "    注意：本补丁需要重启 dsh web 才完全生效。" -ForegroundColor Magenta }
     if ($CheckOnly) { continue }
-    $env:DSH_PATCH_BACKUP_DIR = $backupDir
+    $env:DSH_PATCH_BACKUP_DIR = [IO.Path]::GetFullPath($backupDir)
+    $env:DSH_PATCH_BACKUP_ROOT = [IO.Path]::GetFullPath($BackupRoot)
     $env:DSH_PATCH_PROFILE_DIR = $ProfileDir
     try {
         # 同还原分支：调用前清零 $LASTEXITCODE，避免上游残留污染失败判断

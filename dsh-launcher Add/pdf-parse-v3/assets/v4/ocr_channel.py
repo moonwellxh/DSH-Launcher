@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-M5 ocr_channel.py —— 本地 OCR 行级识别，保留四点 box（FR-B1 扫描双源；交叉对位/几何错位信号源）
+M5 ocr_channel.py —— 本地 OCR 行级识别，保留四点 box
+（**定位＝本地备份/兜底**：默认不启用、不参与双源交叉校验；见 详细技术设计 §6.5 v1.3 与
+ 需求确定书变更记录 C-2026-09-27）
 ==================================================================
 设计依据：详细技术设计 §6.5（修复 rapid_ocr_pages.py 第 86–87 行丢弃 box 缺陷——本模块核心改造点）；
-需求书 FR-B1（扫描路径坐标双源：GLM 块级 + 本地 OCR 行四点 box）。
+需求书 FR-B1（扫描路径坐标：GLM 块级为唯一内容源；本地 OCR 行四点 box 仅在显式启用
+本地兜底路径时产出）。
 
 产物（每页）：{"page":N, "lines":[{"box":[x1,y1,x2,y2], "box4":[[x,y]x4], "text":"...", "source":"ocr"}]}
 box = box4 的轴对齐外接框；box4 保留原始四点供倾斜页。行排序沿用 sort_key（y/12 量化 + x）。
@@ -15,8 +18,14 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
+
+# B2 修复（2026-09-27）：编排层是页级并发，但本地引擎按纪律「单进程顺序跑」——
+# 进程内单实例引擎 + 调用处串行；否则默认 6 路即 6 个 onnxruntime 会话、抢满本机 CPU。
+_ENGINE_LOCK = threading.RLock()
+_ENGINE_CACHE = {}
 
 
 class OcrUnavailable(Exception):
@@ -39,18 +48,29 @@ def _bbox(box4):
 
 
 def _make_engine(cfg):
-    try:
-        from rapidocr_onnxruntime import RapidOCR
-    except Exception as e:
-        raise OcrUnavailable(f"rapidocr_onnxruntime 缺失/失败: {e}")
-    det = cfg.get("ocr", {}).get("det_limit_side_len", 960)
-    return RapidOCR(det_limit_side_len=int(det))
+    """本地 RapidOCR 引擎（进程内单实例缓存）。
+    v1.3：并发编排下必须复用同一实例——每页新建实例即每页一份模型驻留，
+    正是 SKILL.md §4「多进程会抢满 CPU」要避免的形态。"""
+    det = int(cfg.get("ocr", {}).get("det_limit_side_len", 960))
+    with _ENGINE_LOCK:
+        eng = _ENGINE_CACHE.get(det)
+        if eng is not None:
+            return eng
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+        except Exception as e:
+            raise OcrUnavailable(f"rapidocr_onnxruntime 缺失/失败: {e}")
+        eng = RapidOCR(det_limit_side_len=det)
+        _ENGINE_CACHE[det] = eng
+        return eng
 
 
 def ocr_page(png_path, engine, page):
-    """单页 OCR。返回 {"page":N, "lines":[{"box","box4","text","source":"ocr"}]}。"""
+    """单页 OCR。返回 {"page":N, "lines":[{"box","box4","text","source":"ocr"}]}。
+    v1.3：**引擎调用串行化**——编排层页级并发不作用于本地引擎（网络/渲染并发不受影响）。"""
     try:
-        res, _ = engine(png_path)
+        with _ENGINE_LOCK:
+            res, _ = engine(png_path)
     except Exception as e:
         raise OcrUnavailable(f"OCR 失败 {page}: {e}")
     lines = []

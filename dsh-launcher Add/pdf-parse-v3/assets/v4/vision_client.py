@@ -20,6 +20,8 @@ import base64
 import hashlib
 import json
 import os
+import sys
+import threading
 import time
 import unicodedata
 from pathlib import Path
@@ -45,6 +47,14 @@ USER_KEY_FILE = Path.home() / ".config" / "pdf-parse-v3" / "keys.json"
 
 # GLM 单图输入上限（需求书 §10；超限走 render 降采样，M2，MS-1 只用其记账常量）
 DEFAULT_MAX_IMAGE_BYTES = 10485760
+
+# 并发纪律（v1.3，2026-09-27）：出域通道改有界并发后，下列共享状态必须加锁。
+_LEDGER_LOCK = threading.Lock()      # token 台账逐行追加（防交错/半行）
+_CACHE_LOCK = threading.Lock()       # 指纹缓存写入（同指纹并发写防半文件）
+# 429 退避序列：索引 i 为第 i 次重试前的等待。默认 max_retries=3 → 实际只经历
+# 1s、3s 两档（9s 档需 max_retries>=4；文档据此更正，勿再写"1s/3s/9s"为实际序列）。
+_RETRY_429_BACKOFFS = [1.0, 3.0, 9.0]
+_RETRY_AFTER_MAX_S = 60.0             # m3 修复：Retry-After 上限，防单次退避睡满小时级
 
 
 class VisionError(Exception):
@@ -160,7 +170,8 @@ class VisionCache:
         p = self._path(channel, task_type, fp)
         p.parent.mkdir(parents=True, exist_ok=True)
         entry = {"raw_response": raw_response, "first_run_ledger": first_run_ledger}
-        p.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+        with _CACHE_LOCK:                  # v1.3：同指纹并发写防半文件
+            p.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
 
     def raw_or_none(self, channel, task_type, fp):
         e = self.get(channel, task_type, fp)
@@ -237,31 +248,57 @@ class BudgetGate:
             self.limits.update(limits)
         self.costs = {GLM_CHANNEL: 0.0, SECOND_OPINION_CHANNEL: 0.0}
         self.blocked = set()
+        self._lock = threading.RLock()     # v1.3：并发下 check/register 原子化（RLock：register 内调 check）
         self.peak_cap_cny = b.get("deepseek_peak_cap_cny")   # None=未设默认（Q13 仅要求可配）
         self.peak_spent_cny = 0.0
 
     def check(self, channel, *, peak=False) -> bool:
-        lim = self.limits.get(channel)
-        if lim is not None and self.costs[channel] >= lim:
-            return False
-        if channel == SECOND_OPINION_CHANNEL and peak and self.peak_cap_cny is not None:
-            if self.peak_spent_cny >= self.peak_cap_cny:
+        with self._lock:
+            lim = self.limits.get(channel)
+            if lim is not None and self.costs[channel] >= lim:
                 return False
-        return True
+            if channel == SECOND_OPINION_CHANNEL and peak and self.peak_cap_cny is not None:
+                if self.peak_spent_cny >= self.peak_cap_cny:
+                    return False
+            return True
+
+    def why_blocked(self, channel, *, peak=False):
+        """L2（2026-09-27）：返回阻塞原因 'channel_limit' | 'peak_cap' | None。
+        旧实现只回 bool，确认提示一律写"预算超限"——峰谷封顶触发时会误报原因。"""
+        with self._lock:
+            lim = self.limits.get(channel)
+            if lim is not None and self.costs[channel] >= lim:
+                return "channel_limit"
+            if channel == SECOND_OPINION_CHANNEL and peak and self.peak_cap_cny is not None:
+                if self.peak_spent_cny >= self.peak_cap_cny:
+                    return "peak_cap"
+            return None
+
+    def peak_usage(self):
+        """峰谷封顶用量（供确认提示如实展示）。"""
+        with self._lock:
+            return {"spent": self.peak_spent_cny, "cap": self.peak_cap_cny}
 
     def register(self, channel, cost, *, peak=False):
-        self.costs[channel] = round(self.costs.get(channel, 0.0) + (cost or 0.0), 6)
-        if channel == SECOND_OPINION_CHANNEL and peak:
-            self.peak_spent_cny = round(self.peak_spent_cny + (cost or 0.0), 6)
-        if not self.check(channel, peak=peak):
-            self.blocked.add(channel)
-        elif channel == SECOND_OPINION_CHANNEL and self.peak_cap_cny is not None \
-                and self.peak_spent_cny >= self.peak_cap_cny:
-            self.blocked.add(channel)
+        """累计并判定封顶。v1.3 并发注：加锁保证累计不丢（无 lost update）；
+        但 check（调用前）与 register（调用后）之间仍有窗口，窗口长度≈单次调用时长，
+        **同时在窗口内的调用数即超限调用数**：并发 N 下最多 N 次调用可同时通过 check 而
+        尚未 register，故超限上界为 N×单次调用成本；N=1（旧串行行为）亦有 1×单次成本
+        的窗口，并非零。该界已写入详细技术设计 §6.4（m1 更正）。"""
+        with self._lock:
+            self.costs[channel] = round(self.costs.get(channel, 0.0) + (cost or 0.0), 6)
+            if channel == SECOND_OPINION_CHANNEL and peak:
+                self.peak_spent_cny = round(self.peak_spent_cny + (cost or 0.0), 6)
+            if not self.check(channel, peak=peak):
+                self.blocked.add(channel)
+            elif channel == SECOND_OPINION_CHANNEL and self.peak_cap_cny is not None \
+                    and self.peak_spent_cny >= self.peak_cap_cny:
+                self.blocked.add(channel)
 
     def summary(self):
-        return {k: {"cost": self.costs[k], "limit": self.limits.get(k), "blocked": k in self.blocked}
-                for k in self.costs}
+        with self._lock:
+            return {k: {"cost": self.costs[k], "limit": self.limits.get(k), "blocked": k in self.blocked}
+                    for k in self.costs}
 
 
 # ---------------------------------------------------------------- token 台账
@@ -271,14 +308,30 @@ def append_token_ledger(rec, ledger_path):
     prompt, completion, cache_hit, cost_cny, peak, ...}。"""
     lp = Path(ledger_path)
     lp.parent.mkdir(parents=True, exist_ok=True)
-    with lp.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    with _LEDGER_LOCK:                     # v1.3：并发下保证整行写入不交错
+        with lp.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
 # ---------------------------------------------------------------- HTTP（可注入以便离线测试）
 
+def _retry_after_seconds(resp):
+    """解析 Retry-After（仅秒数形态；HTTP-date 形态忽略，返回 None）。
+    m3 修复：加**上限** `_RETRY_AFTER_MAX_S`——否则服务器给 Retry-After: 3600
+    会让单次退避睡 1 小时（timeout 只管单次请求，管不到退避时长）。"""
+    try:
+        v = resp.headers.get("Retry-After")
+        if v is None:
+            return None
+        return min(_RETRY_AFTER_MAX_S, max(0.0, float(str(v).strip())))
+    except Exception:
+        return None
+
+
 def _http_post_json(model_key, url, headers, body, *, timeout=300, max_retries=3):
-    """网络/5xx/timeout 指数退避 ≤3 次（0.5s/2s/8s）；4xx 不重试（FR-D5 限流纪律）。"""
+    """网络/5xx/timeout 指数退避 ≤3 次（0.5s/2s/8s）；**429 可重试**
+    （退避 1s/3s/9s，服务器给出 Retry-After 时取其较大值；退避耗尽仍按 http_4xx 抛错走 FR-D7 降级）；
+    其余 4xx 不重试（FR-D5 限流纪律，v1.3 修订 2026-09-27）。"""
     backoffs = [0.5, 2.0, 8.0]
     last_err = None
     for i in range(max_retries):
@@ -286,6 +339,15 @@ def _http_post_json(model_key, url, headers, body, *, timeout=300, max_retries=3
             r = requests.post(url, json=body, headers=headers, timeout=timeout)
             if r.status_code == 200:
                 return r
+            if r.status_code == 429:          # 限流：并发引入后必须退避重试
+                last_err = VisionError("http_4xx",
+                                       f"{model_key} HTTP 429 (rate limited): {r.text[:300]}")
+                if i < max_retries - 1:
+                    wait = _RETRY_429_BACKOFFS[min(i, len(_RETRY_429_BACKOFFS) - 1)]
+                    ra = _retry_after_seconds(r)
+                    time.sleep(wait if ra is None else max(wait, ra))
+                    continue
+                raise last_err
             if 400 <= r.status_code < 500:
                 raise VisionError("http_4xx", f"{model_key} HTTP {r.status_code}: {r.text[:300]}")
             if r.status_code >= 500:
@@ -461,7 +523,8 @@ class VisionClient:
     """M4 视觉客户端。唯一出域点。config + 密钥加载后构造一次。"""
 
     def __init__(self, cfg, *, keys=None, ledger_path="work/ledger/token.jsonl",
-                 cache=None, budget=None, egress_allow=None, no_cache=False):
+                 cache=None, budget=None, egress_allow=None, no_cache=False,
+                 budget_confirm=None):
         self.cfg = cfg
         self.keys = keys if keys is not None else load_keys()
         self.ledger_path = ledger_path
@@ -472,6 +535,14 @@ class VisionClient:
         # egress_allow 默认取 config.egress.allow；None 表示用配置值，False 即 --no-egress 短路
         self.egress_allow = egress_allow if egress_allow is not None else bool(cfg.get("egress", {}).get("allow", True))
         self.no_cache = no_cache
+        # #4（2026-09-27）：预算超限不再静默降级——由编排层注入确认回调；None=旧行为
+        self.budget_confirm = budget_confirm
+        # S-1 修复（2026-09-27）：确认闸必须有状态机 + 互斥
+        self._budget_lock = threading.Lock()
+        # L2：放行按 **原因** 记账——{channel: {"channel_limit"/"peak_cap"}}；
+        # 旧实现按通道记账，一次"继续"会连带豁免峰谷封顶（提示里也没披露）
+        self._budget_ok_exceed = {}
+        self._budget_refused = set()        # 已明确"停止该通道"的通道（本运行不再问、直接降级）
 
     # ---- 出域闸门 ----
     def _check_egress(self):
@@ -483,9 +554,43 @@ class VisionClient:
     def _precall(self, channel):
         self._check_egress()
         peak = peek_channel_peak(self.cfg) if channel == SECOND_OPINION_CHANNEL else False
-        if not self.budget.check(channel, peak=peak):
-            raise VisionError("budget_exceeded", f"{channel} 预算超限（peak={peak}）",
-                              degrade_hint=f"degraded:{channel} budget_exceeded")
+        if self.budget.check(channel, peak=peak):
+            return
+        # S-1：check→询问→落状态 三步必须原子；否则并发下会重复弹问、且拒绝不被记忆。
+        # 持锁期间会阻塞同通道其它线程——这正是"只问一次"所需（它们在等同一次决策）。
+        with self._budget_lock:
+            if self.budget.check(channel, peak=peak):      # 双检：等锁期间可能已放行/已累计
+                return
+            reason = self.budget.why_blocked(channel, peak=peak) or "budget"   # L2：如实区分
+            if reason in self._budget_ok_exceed.get(channel, set()):
+                return                                     # L2：只豁免**同一原因**
+            if channel in self._budget_refused:            # 已选"停止该通道"：不再问，直接降级
+                raise VisionError("budget_exceeded",
+                                  f"{channel} 预算超限（用户已选择停止该通道；reason={reason}）",
+                                  degrade_hint=f"degraded:{channel} budget_exceeded")
+            if self.budget_confirm is not None:
+                pu = self.budget.peak_usage()
+                allow = None
+                try:
+                    allow = bool(self.budget_confirm(
+                        channel=channel, reason=reason,
+                        spent=self.budget.costs.get(channel),
+                        limit=self.budget.limits.get(channel), peak=peak,
+                        peak_spent=pu["spent"], peak_cap=pu["cap"]))
+                except Exception as e:      # S-1：回调失败＝未获答复 → 不记忆、不静默
+                    allow = None
+                    try:
+                        sys.stderr.write("WARN: 预算确认回调失败（%s: %s），按 FR-D7 降级且不记忆\n"
+                                         % (type(e).__name__, e))
+                    except Exception:
+                        pass
+                if allow is True:
+                    self._budget_ok_exceed.setdefault(channel, set()).add(reason)   # L2
+                    return
+                if allow is False:
+                    self._budget_refused.add(channel)      # S-1：明确的拒绝才记忆
+        raise VisionError("budget_exceeded", f"{channel} 预算超限（reason={reason}, peak={peak}）",
+                          degrade_hint=f"degraded:{channel} budget_exceeded")
 
     def _model_of(self, channel):
         if channel == GLM_CHANNEL:
@@ -542,6 +647,7 @@ class VisionClient:
                "completion": usage.get("completion") if usage else None,
                "cache_hit": False, "cost_cny": cost if cost is not None else None,
                "peak": peak, "latency_s": out.get("latency_s"), "http_status": out.get("http_status"),
+               "t_start": out.get("t_start"), "t_end": out.get("t_end"),        # L4
                "model": model, "vendor": vendor}
         append_token_ledger(led, self.ledger_path)
         self.budget.register(channel, cost or 0.0, peak=peak)
@@ -562,6 +668,7 @@ class VisionClient:
                "completion": usage.get("completion") if usage else None,
                "cache_hit": False, "cost_cny": cost if cost is not None else None,
                "peak": peak, "latency_s": out.get("latency_s"), "http_status": out.get("http_status"),
+               "t_start": out.get("t_start"), "t_end": out.get("t_end"),        # L4
                "model": model, "vendor": vendor, "status": status}
         append_token_ledger(led, self.ledger_path)
         self.budget.register(channel, cost or 0.0, peak=peak)
@@ -592,7 +699,8 @@ class VisionClient:
                             {"Authorization": f"Bearer {self._api_key_for('zhipu')}",
                              "Content-Type": "application/json"}, body)
         dt = round(time.time() - t0, 2)
-        out = {"http_status": r.status_code, "latency_s": dt}
+        out = {"http_status": r.status_code, "latency_s": dt,
+               "t_start": round(t0, 3), "t_end": round(time.time(), 3)}      # L4
         try:
             out["response"] = r.json()
         except Exception:
@@ -737,7 +845,8 @@ class VisionClient:
         t0 = time.time()
         r = _http_post_json(f"{vendor}/{model}", endp,
                             {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, body)
-        out = {"http_status": r.status_code, "latency_s": round(time.time() - t0, 2)}
+        out = {"http_status": r.status_code, "latency_s": round(time.time() - t0, 2),
+               "t_start": round(t0, 3), "t_end": round(time.time(), 3)}      # L4
         try:
             out["response"] = r.json()
         except Exception:

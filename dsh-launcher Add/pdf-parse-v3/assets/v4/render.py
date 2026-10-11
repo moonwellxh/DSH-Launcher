@@ -11,9 +11,20 @@ M2 render.py —— PDF 页渲染 + 变换登记（FR-B2）+ 10MB 降档
 """
 import hashlib
 import json
+import threading
 from pathlib import Path
 
 _MAX_PNG_BYTES = 10 * 1024 * 1024     # GLM 单图上限（冻结 §3.4/需求书 §10）
+
+_REGISTRY_LOCK = threading.Lock()     # v1.3：编排并发后 registry.jsonl 追加须互斥
+
+# #12（2026-09-27）：MuPDF / pdfminer 官方均声明非线程安全。口径（m-3 收窄，2026-09-27）：
+#   * 每线程各持一份 Document（`orchestrator._thread_doc`），不跨线程共享句柄；
+#   * **重活串行**——本模块的 get_pixmap/save、textlayer 的取字/取图/pdfplumber 全走此锁。
+#   * 未纳入锁的轻量访问：`fitz.open`（建句柄）与 `doc[pno-1]`/`page.rect`（取页与尺寸），
+#     由"每线程独立 Document"保证；如需绝对保守可一并纳入。
+# 网络出域并发不受影响——渲染是每页毫秒~秒级，相对 GLM 的秒级调用占比很小。
+PDF_BACKEND_LOCK = threading.RLock()
 
 
 class RenderError(Exception):
@@ -35,9 +46,10 @@ def render_page(pdf, page_no, out_dir, cfg, target_width=None, dpi_floor=None):
         处理遗留 R-09/C-8：dpi_floor 为档序耗尽后的末档兜底，仍超 → RenderError(oversize)）。
         登记口径：缺省路径 dpi=档值（既有行为）；target_width 路径 dpi=按实渲宽度派生（两向满足 m-05）。
         返回 registry 条目 dict。"""
-    page = pdf[page_no - 1]
-    rect = page.rect
-    pdf_w, pdf_h = rect.width, rect.height
+    with PDF_BACKEND_LOCK:                 # #12：MuPDF 非线程安全
+        page = pdf[page_no - 1]
+        rect = page.rect
+        pdf_w, pdf_h = rect.width, rect.height
     if pdf_w <= 0 or pdf_h <= 0:
         raise RenderError("render_failed", "page %d 尺寸非法 %s" % (page_no, [pdf_w, pdf_h]))
     render_cfg = cfg.get("render", {})
@@ -90,13 +102,15 @@ def render_page(pdf, page_no, out_dir, cfg, target_width=None, dpi_floor=None):
         import pymupdf as fitz
         mat = fitz.Matrix(reg_dpi / 72.0, reg_dpi / 72.0)
         try:
-            pix = page.get_pixmap(matrix=mat)
+            with PDF_BACKEND_LOCK:
+                pix = page.get_pixmap(matrix=mat)
         except Exception as e:
             last_err = RenderError("render_failed", "page %d dpi=%s: %s" % (page_no, reg_dpi, e))
             continue
         png = out / ("page_%04d.png" % page_no)
         try:
-            pix.save(str(png))
+            with PDF_BACKEND_LOCK:
+                pix.save(str(png))
         except Exception as e:
             last_err = RenderError("render_failed", "save %s: %s" % (png, e))
             continue
@@ -129,9 +143,10 @@ def append_registry(reg_path, entries):
     """registry.jsonl 追加（每页一条 JSON line，UTF-8）。"""
     reg_path = Path(reg_path)
     reg_path.parent.mkdir(parents=True, exist_ok=True)
-    with reg_path.open("a", encoding="utf-8") as f:
-        for e in entries:
-            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    with _REGISTRY_LOCK:
+        with reg_path.open("a", encoding="utf-8") as f:
+            for e in entries:
+                f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
 
 def px_to_pt(box, reg):

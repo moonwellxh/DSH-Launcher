@@ -9,6 +9,8 @@ M3 textlayer.py —— 文字层确定性提取（FR-B1 词/行 bbox；FR-C3 表
 """
 import re
 
+from render import PDF_BACKEND_LOCK      # #12：PDF 后端（MuPDF/pdfplumber）串行锁
+
 HEADER_BAND = 0.09
 
 
@@ -76,9 +78,10 @@ _PSEUDO_MIN_RATIO = 0.30
 def textlayer_page(pdf, page_no, render_reg, cfg):
     """单页文字层 → page part（lines[] px 系、tables 网格、routing/reroute、intra_regions）。
     render_reg = {scale:[sx,sy], dpi, pixel, render_sha1}（变换登记，M2 提供）。"""
-    page = pdf[page_no - 1]
-    w = page.rect.width
-    h, lines = _collect(page)
+    with PDF_BACKEND_LOCK:                 # #12：MuPDF 非线程安全
+        page = pdf[page_no - 1]
+        w = page.rect.width
+        h, lines = _collect(page)
     lay = _detect_columns(w, lines)
     kept = [l for l in lines if _noise_key(l[5], (l[0] < h * HEADER_BAND) or (l[0] > h * (1 - HEADER_BAND)))]
     ordered = _order_lines(kept, lay, w)
@@ -94,7 +97,7 @@ def textlayer_page(pdf, page_no, render_reg, cfg):
     tables = []
     try:
         import pdfplumber
-        with pdfplumber.open(pdf.name) as docp:
+        with PDF_BACKEND_LOCK, pdfplumber.open(pdf.name) as docp:   # #12
             ptp = docp.pages[page_no - 1]
             for ti, tb in enumerate(ptp.find_tables()):
                 grid = tb.extract()
@@ -112,7 +115,8 @@ def textlayer_page(pdf, page_no, render_reg, cfg):
                                "bbox": pt_to_px(list(tb.bbox), render_reg)})
     except Exception:
         tables = []
-    intra_regions = detect_intra_regions(page, page_lines, cfg)
+    with PDF_BACKEND_LOCK:
+        intra_regions = detect_intra_regions(page, page_lines, cfg)
     return {"page_number": page_no, "text": text, "lines": page_lines,
             "blocks": [], "tables": tables, "images": [],
             "routing": [{"page": page_no, "method": "textlayer",

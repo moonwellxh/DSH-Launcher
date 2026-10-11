@@ -19,7 +19,13 @@ $UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like
 $curl = (Get-Command curl.exe -ErrorAction SilentlyContinue).Source
 $jar = Join-Path $OutDir 'cookies.txt'
 $work = Join-Path $OutDir '_tmp'
+$workOwned = -not (Test-Path -LiteralPath $work)   # clean up only a _tmp this script created
 New-Item -ItemType Directory -Force -Path $work | Out-Null
+function Remove-TmpWork {
+  Write-Host ('[cleanup] tmp=' + $work + ' owned=' + $workOwned)
+  if (-not $workOwned) { return }
+  if (Test-Path -LiteralPath $work) { try { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction Stop } catch { Write-Host ('[cleanup] tmp remove failed: ' + $_.Exception.Message) } }
+}
 
 # 1) seed cookies from detail page
 & $curl -s -L --max-time 45 -A $UA -c $jar -o (Join-Path $work 'info.html') `
@@ -50,7 +56,7 @@ if (-not $got) {
   $msg = 'openstd viewer refused automated access (JS anti-bot). Open manually: ' + $viewer
   Save-Utf8 (Join-Path $OutDir 'status.json') (@{ ok = $false; hcno = $Hcno; message = $msg; viewer_url = $viewer } | ConvertTo-Json)
   Write-Output ("ERROR " + $msg)
-  Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-TmpWork
   exit 3
 }
 
@@ -72,7 +78,7 @@ if ($pages.Count -eq 0) {
   $msg = 'viewer page parse found no images; open manually: ' + $viewer
   Save-Utf8 (Join-Path $OutDir 'status.json') (@{ ok = $false; hcno = $Hcno; message = $msg; viewer_url = $viewer } | ConvertTo-Json)
   Write-Output ("ERROR " + $msg)
-  Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-TmpWork
   exit 4
 }
 
@@ -102,7 +108,7 @@ foreach ($p in $pages) {
     $okFiles.Add($out)
     Write-Output ("page {0} ok {1}b" -f $p.no, $sz)
   } else {
-    Remove-Item $out -Force -ErrorAction SilentlyContinue
+    try { Remove-Item -LiteralPath $out -Force -ErrorAction Stop } catch { Write-Host ('[cleanup] partial download remove failed: ' + $_.Exception.Message) }
     $failPages++
     Write-Output ("page {0} BLOCKED-or-error (not an image; anti-bot likely)" -f $p.no)
   }
@@ -126,4 +132,4 @@ if ($allFail) {
   Write-Output ("  OCR 已下载页可用: powershell.exe -File winrt-ocr.ps1 -ListFile <out>\ocr_images.txt -OutDir <out>\ocr")
 }
 Write-Output ("DONE pages=" + $pages.Count + " ok=" + $okFiles.Count + " fail=" + $failPages + " out=" + $OutDir)
-Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+Remove-TmpWork

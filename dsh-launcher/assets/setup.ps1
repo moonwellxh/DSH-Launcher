@@ -19,6 +19,29 @@ $scriptDir = $PSScriptRoot   # assets 目录
 
 function Step([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
 
+# --- SAFE-DELETE guard (added 2026-10-09): refuse paths outside an allowed root ---
+function Assert-SafePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$AllowedRoot,
+        [string]$LeafPattern = '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { throw 'SAFE-DELETE: empty path' }
+    if ([string]::IsNullOrWhiteSpace($AllowedRoot)) { throw 'SAFE-DELETE: empty allowed root' }
+    $full = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetFullPath($AllowedRoot).TrimEnd('\', '/')
+    if (-not $full.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw ('SAFE-DELETE: outside allowed root: ' + $full)
+    }
+    $leaf = Split-Path $full -Leaf
+    if ($leaf -notmatch $LeafPattern) { throw ('SAFE-DELETE: leaf rejected: ' + $leaf) }
+    if ($full.TrimEnd('\', '/').Length -le 3) { throw 'SAFE-DELETE: drive root rejected' }
+    if ($env:USERPROFILE -and ($full.TrimEnd('\', '/') -ieq $env:USERPROFILE.TrimEnd('\', '/'))) {
+        throw 'SAFE-DELETE: user profile root rejected'
+    }
+    return $full
+}
+
 function Install-GeneralMemoryRule0 {
     # DSH 的「通用记忆」= 用户全局指令文件 $DSH_HOME\AGENTS.md（$DSH_HOME 未设时 = ~\.dsh\AGENTS.md）。
     # DSH 每次会话启动都会自动加载它（先于任何项目级 AGENTS.md）。因此：只要安装过一次启动器
@@ -406,6 +429,7 @@ if (Test-Path -LiteralPath $companionDir) {
     Get-ChildItem -LiteralPath $companionDir -Filter '*__skillhub.zip' | ForEach-Object {
         $zip = $_.FullName
         $slug = $_.BaseName -replace '__skillhub$',''
+        if ($slug -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { Write-Host "  [!] illegal skill package name, skipped: $slug" -ForegroundColor Yellow; return }
         $dest = Join-Path $skillsRoot $slug
         $need = -not (Test-Path -LiteralPath (Join-Path $dest 'SKILL.md'))
         if (-not $need) {
@@ -457,12 +481,48 @@ if (Test-Path -LiteralPath $companionDir) {
             if ($LASTEXITCODE -ne 0) { try { Expand-Archive -LiteralPath $zip -DestinationPath $tmpRoot -Force -ErrorAction Stop } catch {} }
             $tmpSkill = Join-Path $tmpRoot $slug
             if (Test-Path -LiteralPath (Join-Path $tmpSkill 'SKILL.md')) {
-                if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
-                Move-Item -LiteralPath $tmpSkill -Destination $dest -Force
-                $installed = $true
+                $bak = $null
+                $archived = $false
+                try {
+                    if (Test-Path -LiteralPath $dest) {
+                        $safe = Assert-SafePath -Path $dest -AllowedRoot $skillsRoot
+                        $bakRoot = Join-Path $skillsRoot '_backup'
+                        New-Item -ItemType Directory -Force -Path $bakRoot | Out-Null
+                        $bak = Join-Path $bakRoot ($slug + '_' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+                        if (Test-Path -LiteralPath $bak) { throw ('SAFE-DELETE: backup target already exists: ' + $bak) }
+                        Move-Item -LiteralPath $safe -Destination $bak -Force
+                        $archived = $true
+                        Write-Host "  archived: $slug -> $bak" -ForegroundColor DarkGray
+                    }
+                    Move-Item -LiteralPath $tmpSkill -Destination $dest -Force
+                    $installed = $true
+                    # AR-SG-006: the "archived:" line now prints right after the archive move (above),
+                    # so the archive -> install order is traceable even when the install fails.
+                } catch {
+                    $why = $_.Exception.Message
+                    if ($archived -and $bak -and (Test-Path -LiteralPath $bak) -and -not (Test-Path -LiteralPath $dest)) {
+                        try {
+                            Move-Item -LiteralPath $bak -Destination $dest -Force
+                            Write-Host ('  install failed, previous version restored from backup: ' + $why) -ForegroundColor Red
+                        } catch {
+                            Write-Host ('  install failed AND rollback failed: ' + $why) -ForegroundColor Red
+                            Write-Host ('  previous version kept at: ' + $bak) -ForegroundColor Red
+                            Write-Host ('  rollback: Move-Item -LiteralPath "' + $bak + '" -Destination "' + $dest + '" -Force') -ForegroundColor Red
+                        }
+                    } else {
+                        Write-Host ('  install failed: ' + $why) -ForegroundColor Red
+                    }
+                }
             }
         } finally {
-            Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+            if ($tmpRoot -and (Test-Path -LiteralPath $tmpRoot)) {
+                try {
+                    $null = Assert-SafePath -Path $tmpRoot -AllowedRoot ([IO.Path]::GetTempPath())
+                    Remove-Item -LiteralPath $tmpRoot -Recurse -Force
+                } catch {
+                    Write-Host ('  temp cleanup skipped: ' + $_.Exception.Message) -ForegroundColor Yellow
+                }
+            }
         }
         if ($installed) {
             Write-Host "  已安装：$slug" -ForegroundColor Green

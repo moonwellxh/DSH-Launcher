@@ -30,7 +30,8 @@
   "budget": {
     "glm_per_volume_cny": 1.0,
     "second_opinion_per_volume_cny": 1.0,
-    "deepseek_peak_cap_cny": null
+    "deepseek_peak_cap_cny": null,
+    "confirm_on_exceed": true
   },
   "render": {
     "dpi_default": 220,
@@ -73,7 +74,8 @@
     "wire_v_min": 3
   },
   "egress": {
-    "allow": true
+    "allow": true,
+    "concurrency": 6
   },
   "cache": {
     "dir": "work/cache",

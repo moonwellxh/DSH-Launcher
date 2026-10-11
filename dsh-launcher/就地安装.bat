@@ -10,9 +10,11 @@ REM  不需要提供压缩包地址。
 REM ============================================================
 set "SKILL_DIR=%~dp0"
 if "%SKILL_DIR:~-1%"=="\" set "SKILL_DIR=%SKILL_DIR:~0,-1%"
+if not defined USERPROFILE (echo [错误] 环境变量 USERPROFILE 缺失，已中止。& pause & exit /b 1)
 
 REM --- ① 注册技能到用户技能目录 ---
 set "AGENTS_SKILL=%USERPROFILE%\.agents\skills\dsh-launcher"
+if not "%AGENTS_SKILL:~1,2%"==":\" (echo [错误] 目标技能目录不是绝对路径，已中止：%AGENTS_SKILL%& pause & exit /b 1)
 if /i "%SKILL_DIR%"=="%AGENTS_SKILL%" (
     echo 检测到当前即技能目录，跳过复制与清理步骤，直接就地安装...
     goto :install
@@ -29,7 +31,12 @@ REM 清理运行期/生成文件，保持技能目录纯净（重跑时源目录已有生成物）
 for %%f in (DSH-tray.ps1 dsh.cmd 启动DSH.bat 启动DSH-托盘.cmd launcher.version dsh-web.log dsh-web.err.log install-dir.txt README.md whale.ico whale-white.ico whale-white.png whale-white.svg whale.png tray.ico) do (
     if exist "%AGENTS_SKILL%\%%f" del /q "%AGENTS_SKILL%\%%f"
 )
-if exist "%AGENTS_SKILL%\升级" rmdir /s /q "%AGENTS_SKILL%\升级"
+REM --- 审查 A-33：不再直接删除「升级」目录，改为归档到 _backup（不可逆删除 -> 可回退） ---
+if exist "%AGENTS_SKILL%\升级" (
+    if not exist "%AGENTS_SKILL%\_backup" mkdir "%AGENTS_SKILL%\_backup"
+    move "%AGENTS_SKILL%\升级" "%AGENTS_SKILL%\_backup\升级_bak-%RANDOM%" >nul
+    if errorlevel 1 echo [警告] 「升级」目录归档失败，已保留原处（未删除）。
+)
 echo 技能已注册（DSH AI 会话可加载 dsh-launcher 及配套技能）。
 echo.
 

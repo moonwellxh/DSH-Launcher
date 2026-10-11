@@ -11,7 +11,8 @@ param(
     [string]$GhToken = '',
     [ValidateSet('auto', 'upload', 'pull')][string]$Direction = 'auto',
     [switch]$NoRestart,
-    [switch]$NoUI
+    [switch]$NoUI,
+    [switch]$AllowPurge
 )
 
 $ErrorActionPreference = 'Stop'
@@ -145,6 +146,11 @@ function Is-SyncIgnored {
     # 24.9 MB 规范 PDF 与 180 张页面 PNG）整目录打包会把技能包顶到 129.21 MB，触发 GitHub 单文件
     # 100 MB 硬上限致推送被 pre-receive 拒收。此类样本语料不进包、不进源树（技能自身测试仍用本机文件）。
     if ($Rel -match '(^|[\\/])tests[\\/]vision_shootout[\\/]') { return $true }
+    # 备份目录（2026-10-12 用户裁决）：各技能根/子目录下的 _backup\ 存放秒级时间戳的改前备份
+    # （全树 15 个目录 / 308 文件 / 171.6 MB）。这是本机回退点，不进包、不进源树。
+    # 注意：只加在这里（阻止复制）；**不要**加进 Test-SyncPurgePath——否则带 -AllowPurge 时
+    # 会把仓库里已提交的历史备份整目录删除（GitHub 侧不可逆）。备案见 changelog 321 行。
+    if ($Rel -match '(^|[\\/])_backup([\\/]|$)') { return $true }
     return $false
 }
 
@@ -584,10 +590,19 @@ function Sync-LauncherScript {
                 New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
                 Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
             }
+            # A-34 guard: reverse deletion (local files absent from the remote manifest) now requires
+            # an explicit -AllowPurge AND a remote manifest that is plausibly complete (>=80% of local).
+            $localCount = @(Get-ChildItem -LiteralPath $SkillDir -Recurse -File | Where-Object {
+                -not (Is-SyncIgnored (($_.FullName.Substring($SkillDir.Length + 1)) -replace '\\','/')) }).Count
+            $minRemote = [Math]::Ceiling($localCount * 0.8)
+            $purgeOk = $AllowPurge -and ($remoteMap.Count -gt 0) -and ($remoteMap.Count -ge $minRemote)
+            if (-not $purgeOk) {
+                Write-SyncStatus 'warning' ('反向删除已跳过（安全守卫 A-34）：远端清单 ' + $remoteMap.Count + ' 项，本地 ' + $localCount + ' 项，下限 ' + $minRemote + ' 项，AllowPurge=' + $AllowPurge + '。差异未清理；确认远端清单完整后加 -AllowPurge 重跑。')
+            }
             Get-ChildItem -LiteralPath $SkillDir -Recurse -File | ForEach-Object {
                 $rel = ($_.FullName.Substring($SkillDir.Length + 1) -replace '\\','/')
                 if (Is-SyncIgnored $rel) { return }
-                if (-not $remoteMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+                if ($purgeOk -and -not $remoteMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
             }
             $setupOut = (& (Join-Path $PSHome 'powershell.exe') -NoProfile -ExecutionPolicy Bypass -File (Join-Path $SkillDir 'assets\setup.ps1') -InstallDir $InstallDir -NoShortcut 2>&1 | ForEach-Object { "$_" }) -join "`n"
             if ($LASTEXITCODE -ne 0) {
@@ -623,11 +638,18 @@ function Sync-LauncherScript {
                 New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
                 Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
             }
+            # A-35..A-38 guard: purging the repo source tree requires -AllowPurge and a complete local map.
+            $srcCount = @(Get-ChildItem -LiteralPath $srcTree -Recurse -File).Count
+            $minLocal = [Math]::Ceiling($srcCount * 0.8)
+            $purgeOkUp = $AllowPurge -and ($localMap.Count -gt 0) -and ($localMap.Count -ge $minLocal)
+            if (-not $purgeOkUp) {
+                Write-SyncStatus 'warning' ('推送侧清理已跳过（安全守卫 A-35~A-38）：本地清单 ' + $localMap.Count + ' 项，仓库树 ' + $srcCount + ' 项，下限 ' + $minLocal + ' 项，AllowPurge=' + $AllowPurge + '。')
+            }
             Get-ChildItem -LiteralPath $srcTree -Recurse -File | ForEach-Object {
                 $rel = ($_.FullName.Substring($srcTree.Length + 1) -replace '\\','/')
-                    if (Test-SyncPurgePath $rel) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue; return }
+                    if ($purgeOkUp -and (Test-SyncPurgePath $rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue; return }
                 if (Is-SyncIgnored $rel) { return }
-                if (-not $localMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+                if ($purgeOkUp -and -not $localMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
             }
                 # 配套技能源树同步到仓库 dsh-launcher Add\<技能名>\（与 releases zip 一起归档）
             foreach ($c in $script:CompanionSkills) {
@@ -643,10 +665,10 @@ function Sync-LauncherScript {
                 }
                 Get-ChildItem -LiteralPath $addTree -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
                     $rel = ($_.FullName.Substring($addTree.Length + 1) -replace '\\','/')
-                        if (Test-SyncPurgePath $rel) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue; return }
+                        if ($purgeOkUp -and (Test-SyncPurgePath $rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue; return }
                 if (Is-SyncIgnored $rel) { return }
                     $src = Join-Path $instDir ($rel -replace '/','\')
-                    if (-not (Test-Path -LiteralPath $src)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+                    if ($purgeOkUp -and -not (Test-Path -LiteralPath $src)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
                 }
             }
             $releaseDir = Join-Path $ghCache ("releases\v" + $lm.version)

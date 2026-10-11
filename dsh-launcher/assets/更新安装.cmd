@@ -10,6 +10,9 @@ REM    更新安装.cmd                     （zip 放本目录或按提示输入路径）
 REM    更新安装.cmd <新zip路径>          （拖拽新 zip 到本脚本上）
 REM    更新安装.cmd <zip> <启动器目录>   （可选指定启动器安装目录）
 REM  本脚本位于 <技能目录>\assets\ 下，技能目录 = %~dp0..（自身位置定位，无需配置）
+REM  安全约定（2026-10-12）：请用「复制到 %TEMP% 再以 "%~dp0" 转发」的受支持形态调用；
+REM  不要手工传入含双引号的路径——cmd 会在赋值行就展开它，脚本内无法拦截（已实测）。
+REM  含 & 的路径会被脚本拒绝（见下方校验段）。
 REM ============================================================
 
 REM --- 自我保护：先复制到临时再执行，避免覆盖自身导致读取错乱 ---
@@ -24,7 +27,11 @@ if "%DSH_UPD_RUNNER%"=="" (
 
 REM ============ 以下在临时副本中运行 ============
 set "ASSETS_DIR=%~1"
-set "SKILL_DIR=%ASSETS_DIR%.."
+if not "%ASSETS_DIR%"=="%ASSETS_DIR:&=%" (echo [错误] 传入路径含非法字符，已中止。& pause & exit /b 1)
+if not defined USERPROFILE (echo [错误] 环境变量 USERPROFILE 缺失，已中止。& pause & exit /b 1)
+if not exist "%ASSETS_DIR%..\SKILL.md" (echo [错误] 未传入有效的 assets 目录：%ASSETS_DIR%& pause & exit /b 1)
+for %%i in ("%ASSETS_DIR%..") do set "SKILL_DIR=%%~fi"
+if not exist "%SKILL_DIR%\SKILL.md" (echo [错误] 技能目录校验失败：%SKILL_DIR%& pause & exit /b 1)
 shift
 
 REM --- 获取新 zip：拖拽 %1 → 原 assets 目录 → 提示输入 ---
@@ -85,12 +92,18 @@ if defined MISSING (
 
 REM --- 用新内容覆盖技能目录（/MIR 镜像同步，新版移除的旧文件一并清除） ---
 echo 正在更新技能目录：%SKILL_DIR%
-robocopy "%UPD%\dsh-launcher" "%SKILL_DIR%" /MIR /NFL /NDL /NJH >nul
-if errorlevel 8 (
-    echo 覆盖技能目录失败（robocopy 退出码 %ERRORLEVEL%）。
+REM --- 审查 A-31：/MIR 会删除目标侧多余文件，且目标是变量路径；已改为不删除的覆盖式复制 ---
+rem --- 复制退出码必须先判：/L 列表行会覆盖 ERRORLEVEL（2026-10-12 审查阻断-1） ---
+robocopy "%UPD%\dsh-launcher" "%SKILL_DIR%" /E /NFL /NDL /NJH >nul
+set "_UPD_RC=!ERRORLEVEL!"
+if !_UPD_RC! geq 8 (
+    echo 覆盖技能目录失败（robocopy 退出码 !_UPD_RC!）。
     pause
     exit /b 1
 )
+REM --- 审查 A-31 配套：列出「若做镜像同步本会删除」的过时文件（仅列出，绝不删除） ---
+echo [提示] 下列标记为 *EXTRA File 者，是旧版本遗留、新包已不含的文件（本次只列出，未删除）：
+robocopy "%UPD%\dsh-launcher" "%SKILL_DIR%" /L /E /PURGE /NJH /NJS /NDL /NFL /NP
 
 REM --- 运行新 setup.ps1（自动按清单应用补丁） ---
 set "INSTALL_DIR=%~2"

@@ -122,6 +122,25 @@ function Restore-AllBackups {
     if ($map.Count -gt 0) {
         Write-BackupManifest @{}
         # 全部还原成功：删除备份目录，避免「目录存在=已应用」误报
-        try { Remove-Item -LiteralPath $BackupDir -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        # safe-delete guard: only drop the patch backup dir we were told to use (containment + manifest)
+        $safeDrop = $false
+        if (-not [string]::IsNullOrWhiteSpace($BackupDir)) {
+            $bd = [IO.Path]::GetFullPath($BackupDir).TrimEnd('\', '/')
+            $isDriveRoot = ($bd.Length -le 3)
+            $isHome = ($env:USERPROFILE -and ($bd -ieq $env:USERPROFILE.TrimEnd('\', '/')))
+            $hasManifest = Test-Path -LiteralPath (Join-Path $bd 'backup-manifest.json')
+            $contained = $false
+            $root = $env:DSH_PATCH_BACKUP_ROOT
+            if (-not [string]::IsNullOrWhiteSpace($root)) {
+                $rt = [IO.Path]::GetFullPath($root).TrimEnd('\', '/')
+                $contained = $bd.StartsWith($rt + '\', [StringComparison]::OrdinalIgnoreCase)
+            }
+            $safeDrop = (-not $isDriveRoot) -and (-not $isHome) -and $hasManifest -and $contained
+        }
+        if ($safeDrop) {
+            try { Remove-Item -LiteralPath $BackupDir -Recurse -Force } catch { Write-Host ('    warn: backup dir kept: ' + $_.Exception.Message) -ForegroundColor Yellow }
+        } else {
+            Write-Host ('    warn: backup dir NOT removed (safe-delete guard): ' + $BackupDir + ' / root=' + $env:DSH_PATCH_BACKUP_ROOT) -ForegroundColor Yellow
+        }
     }
 }
