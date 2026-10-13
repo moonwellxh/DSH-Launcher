@@ -3,6 +3,7 @@ name: skill-install-ops
 description: |
   技能/程序插件安装运维规范（本机长期经验沉淀）。适用于任何「把 zip 技能包或程序插件装到本机并使其可用」的任务：安装前先列清全部环境依赖，环境与主体一起装好（Python 依赖包 / LibreDWG 等二进制 / 注册表项 / 运行时）；目录一律自适应（用 %USERPROFILE%、Path.home()、环境变量探测，禁止硬编码 moonw 等他人用户名）；安装后用「导入验证 + 探测验证 + 自带测试 + 真实冒烟」四层检测确认完全安装好；发现问题当场调试到可用状态，并把文档里的示例路径同步改成本机真实值。
   触发词：「安装 skill」「安装技能」「安装插件」「装环境」「环境适配」「首次使用配置」「装好没」「自检」「调试到可用」「skillhub.zip 安装」「My skills 里的技能」。
+version: 1.1.13
 ---
 
 # 技能/程序插件安装运维规范（skill-install-ops）
@@ -38,6 +39,12 @@ description: |
    装完立即验证导入，**别信 pip 的 Successfully installed 就完事**（见检测层 1）。
 2. **装二进制工具**：优先官方 release 的 win64 包（如 [LibreDWG 0.14 win64](https://github.com/LibreDWG/libredwg/releases/tag/0.14)），下载后**必须校验 SHA256**（release 正文或 `.sha256` 文件里有官方值），不一致拒绝使用。解压到技能脚本的探测路径（如 `~/.workbuddy/bin/libredwg/`）。
 3. **解压技能包**：目标 `%USERPROFILE%\.agents\skills\<技能名>\`（zip 根目录=技能名）。**中文用户名坑**：bsdtar（`C:\Windows\System32\tar.exe`）会把中文用户名按 GBK 误解成乱码导致解压失败，改用 .NET `[System.IO.Compression.ZipFile]::ExtractToDirectory()`。
+   **打包前必过滤维护垃圾（2026-10-13 实测）**：技能目录里的 `_backup/`、`*.bak-*`、`*.bak`、`__pycache__/`、`*.pyc`、`install-dir.txt`、`var/` **一律不打包**。实测反例：某技能分发包内含 `SKILL.md.bak-20260924-094649` 与 `_meta.json.bak-…` 两个备份——新机器解包后技能目录里会多出这两个文件；
+   ```powershell
+   # 判据（可失败）：包内条目集合 == 技能目录内「过滤后」文件集合
+   $z=[IO.Compression.ZipFile]::OpenRead($zip); $e=$z.Entries.FullName; $z.Dispose()
+   $e | Where-Object { $_ -match '(_backup/|\.bak|__pycache__|\.pyc$|install-dir\.txt$|^[^/]+/var/)' }   # 期望：空
+   ```
 4. **注册表/运行时类**：按技能 SKILL.md 的「系统级改动清单」执行，并记录回滚方法。
 
 ## 三、安装后四层检测（缺一不可）
@@ -156,13 +163,69 @@ description: |
    同 zip；③ 镜像 `releases\<版本>\`（主包+各配套）；④ `dsh-launcher Add\<slug>\` 源树（解包副本）；
    ⑤ 主包重建后须含新配套条目（.NET `ZipFile.OpenRead` 数条目 + 匹配 `__skillhub.zip` 条目）；
    ⑥ 远端推送成功（`ls-remote origin main` 前 7 位=本地 HEAD）。
+   **重打主包只能用官方规则（2026-10-13 实测教训）**：主包必须按 `dsh-sync.ps1` 的 `Is-SyncIgnored` 语义重建——
+   排除 `var/`、`install-dir.txt`、`config.json`/`credentials*`/`*.token*`、`tests/vision_shootout/`、**任意 `_backup/`**。
+   自写重打若漏掉这套过滤，会把构建垃圾打进发布包（实测：朴素重打包得 **98 条目**，按规则过滤后 **71 条目**，差 **27 条**全是 `_backup/` 与 `install-dir.txt`；同轮已提交发布版为 70 条、差 1 条即上一批新增的配套包）。
+   **可失败判据（本机可执行，实测通过）**——比较「新包（工作副本）」与「已提交发布版（git HEAD）」：
+   ```powershell
+   $mirror="$env:USERPROFILE\.dsh\gh-sync\DSH-Launcher"; $ver='v1.1.92'
+   $rel="$mirror\releases\$ver"; $main="$rel\dsh-launcher`__skillhub.zip"
+   New-Item -ItemType Directory -Force "$env:TEMP\cmp" | Out-Null
+   # 关键：用 cmd 重定向拿字节流。PowerShell 的 > 是文本重定向，会写出「git version …」而不是 zip（实测 29 B 文本）
+   cmd /c "git -C $mirror show HEAD:releases/$ver/dsh-launcher__skillhub.zip > %TEMP%\cmp\head.zip"
+   foreach($p in @('head.zip','..\..\..\releases\'+$ver+'\dsh-launcher__skillhub.zip')){}
+   $A=[IO.Compression.ZipFile]::OpenRead("$env:TEMP\cmp\head.zip")        # 基线＝已提交发布版
+   $B=[IO.Compression.ZipFile]::OpenRead($main)                              # 现态＝新建主包
+   $an=$A.Entries.FullName; $bn=$B.Entries.FullName
+   '判据1 无丢失 : ' + (($an | Where-Object { $bn -notcontains $_ }).Count -eq 0)
+   '判据2 变化集 : ' + (($an | Where-Object { $bn -contains $_ }).Count) + ' 条共有条目'
+   $changed=@(); foreach($n in ($an | Where-Object { $bn -contains $_ })){
+     $ea=$A.GetEntry($n); $eb=$B.GetEntry($n)
+     $sa=New-Object IO.StreamReader($ea.Open()); $ta=$sa.ReadToEnd(); $sa.Close()
+     $sb=New-Object IO.StreamReader($eb.Open()); $tb=$sb.ReadToEnd(); $sb.Close()
+     if($ta -ne $tb){ $changed+=$n } }
+   '判据3 共有条目内容变化 : ' + $changed.Count
+   $A.Dispose(); $B.Dispose()
+   ```
+   **怎么读判据 3**：变化集应**只含本轮真正改动的配套包**（本轮＝1 个）；若 **0 条**说明新包没把改动打进去（漏更新），若**含非配套条目**说明重打越界。
+   **判据 2 的正确读法（2026-10-13 审查更正）**：「新包 \\ 基线」等于的是**状态差集**，不等于「本次新增的配套」——
+   配套包 A 被替换、配套包 B 被新增时，差集里**只有 B**（A 因同名而不出现在差集里，它出现在判据 3 的**变化集**里）。
+   曾把判据 2 写成「差集 == {本次新增的配套包}」，在双配套场景下字面执行必**假失败**。
+   **别把文件自身当基线**：曾把「刚重打好的包」复制成 `.prev` 再去比对 → 等于自比较，结论恒真（假绿灯）。
 5. **zip 条目名中文**：含中文文件名（如 `docs\PDF解析输出JSON规范.md`）打包用 **python zipfile**
    （自动 UTF-8 条目旗标），避免 .NET Framework 按 ANSI 写坏；建包后 `ZipFile.OpenRead`+`Expand-Archive`
    往返校验；不含 `__pycache__/.pyc`。
 6. 新增配套技能后，新机器 setup.ps1 会从 `assets\配套技能\*.zip` 自动安装到技能目录；依赖多的技能
    应自带 `check-env.ps1 -Install`（如 pdf-parse-v3）实现"同步即装、装完即用"。
 
-7. **受管凭据文件格式（2026-09-05 事故）**：`~/.dsh/.credentials.yaml` 顶层**只允许 `version` 与 `refs`**；密钥必须写在 `refs:` 区块下（缩进两空格），如：
+7. **发布顺序铁律：先冻结内容，再分发（2026-10-13 实测）**：内容还在变时分发，包必然 stale。
+    实测序列：17:28 分发某技能配套 → 17:31 又改了该技能内容 → 包内文件与技能树现态不一致，只能**重打重发**。
+    （本条**不引哈希**：被改文件的哈希每次生成都会变，写进文字即过期——详见 11。）
+    **判据（可直接执行，实测通过；`$slug` 换成技能名）**：
+    ```powershell
+    $slug='skill-install-ops'
+    $src="$env:USERPROFILE\.agents\skills\$slug"
+    $zip="$env:USERPROFILE\.agents\skills\dsh-launcher\assets\配套技能\$slug`__skillhub.zip"
+    $z=[IO.Compression.ZipFile]::OpenRead($zip)
+    $bad=@(); foreach($e in $z.Entries){ $rel=$e.FullName -replace '^[^/]+/',''
+      if($e.FullName -match '/$'){continue}
+      $disk=Join-Path $src $rel
+      if(-not (Test-Path -LiteralPath $disk)){ $bad+="missing-on-disk: $rel"; continue }
+      $s=New-Object IO.StreamReader($e.Open()); $packed=$s.ReadToEnd(); $s.Close()
+      $a=[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($packed)))
+      $b=[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($disk)))
+      if($a -ne $b){ $bad+="hash-differs: $rel" } }
+    $z.Dispose(); if($bad.Count -eq 0){'OK'}else{$bad}   # 期望 OK（每个包内文件与技能树同名文件逐字节一致）
+    ```
+    （注：本轮此判据由 `scripts/selfcheck_install_ops.py` 的等价实现实跑通过——见「脚本」节。）
+
+8. **生成器不得记录自身产物的哈希（自指循环，2026-10-13 实测）**：若「证据块/记录」里写了它自己所属文件或它会改写的文件的哈希，
+    则每次运行都改变自身输出 → 内容永远无法冻结、配套包永远 stale、审查永远追不上（实测：同一生成脚本连跑两次，产物字节不同；
+    连续 3 轮出现「记录的哈希 ≠ 磁盘」，跨轮反复）。
+    **规则**：① 自哈希不入自身文件（由外部变更记录或命令现取承载）；② 若必须引用会被自己改写的文件，改写**只记字节数与存在性**、不记哈希；
+    ③ **可失败判据**：同一生成器**连跑两次，产物字节必须完全相同**（否则判定存在自指循环）。
+
+9. **受管凭据文件格式（2026-09-05 事故）**：`~/.dsh/.credentials.yaml` 顶层**只允许 `version` 与 `refs`**；密钥必须写在 `refs:` 区块下（缩进两空格），如：
 ```yaml
 version: 1
 refs:
@@ -170,7 +233,7 @@ refs:
 ```
 **插件 README 里的"顶层直接写 ANYSEARCH_API_KEY"示例已过时**——顶层追加会让 credentials 插件解析崩溃，dsh web 起不来（表现为"托盘反复崩溃/启动器坏了"的假象）。改凭据前先备份：`Copy-Item x.yaml x.yaml.bak-日期`；修复后用 `dsh web` 就绪信号验证。
 
-8. **AnySearch（@anysearch/anysearch-dsh）DSH 插件安装实战（2026-09-06 实测）**：
+10. **AnySearch（@anysearch/anysearch-dsh）DSH 插件安装实战（2026-09-06 实测）**：
    - 本机是源码树 DSH（`C:\Users\雍远\deepseek-harness`），**不要用 `npx -y @deepseek-ai/dsh ...`**（会另拉 npm 包），直接用源码树 CLI：
      ```
      node C:\Users\雍远\deepseek-harness\apps\cli\lib\bin.js plugin --profile web add @anysearch/anysearch-dsh
@@ -185,7 +248,7 @@ refs:
    - 插件包安装位置：`~/.dsh/profiles/web/`（package.json dependencies + dsh.profile.bundles + pnpm-lock + node_modules）。
    - **端到端实测法（最强验证）**：DSH web 的 api-gateway 支持匿名 RPC（托盘同款）——`POST http://127.0.0.1:3080/api/<method>`，body `{"type":"client-request","rpcId":"...","method":"...","payload":{}}`。可用方法见 `apps/cli/.../api/rpc-map.ts`：`session.create` → `session.models`（新会话默认继承 agent-default-model，**不用 selectModel**）→ `session.prompt {sessionId, mode:'queue', content:[{type:'text',text}]}` → 轮询 `session.history {sessionId}`。历史事件里 `tool/call` 的 `data.name` 是真实工具调用名（比 blob 匹配可靠，目录schema也会产生字符串命中）；`turn/end` 表示回合收尾。脚本样例：任务工作区 `anysearch-e2e.mjs`（2026-09-06 审查时 2 次 tool/call 实证 anysearch_capabilities+web_search）。
    - **卸载（2026-09-06 实测）**：`node ...\bin.js plugin --profile web remove @anysearch/anysearch-dsh`——dependencies 与 bundles 自动移除，`--dump-config` 的 `searchProvider` 自动回退 `deepseek-official`，anysearch 命中归 0。注意：pnpm remove 会留下**空的** `node_modules/@anysearch` scope 目录，手动 `rm -rf` 清掉。凭据 key 留在 credentials.yaml 不动（插件没了不读取，重装直接可用）。卸载后同样要 `restart-web.ps1` 重启生效。
-9. **dsh-thinking-effort（@hytime/dsh-thinking-effort@0.3.3）DSH 插件安装实战（2026-09-24 实测）**：
+11. **dsh-thinking-effort（@hytime/dsh-thinking-effort@0.3.3）DSH 插件安装实战（2026-09-24 实测）**：
    - **同名包辨析（先问清再装）**：纯名 `dsh-thinking-effort` npm 404；实际有 3 个同名/近名候选——`@hytime/dsh-thinking-effort`（最新、对应官方 Discussion #1817，用户选定）、`@chengwd96/dsh-thinking-effort`（近名、可视化配置）、GitHub `DreamRift/dsh-thinking-efforts`（复数、未发 npm）。`npm search thinking-effort` 找候选，**多候选必须先问清，不得自行选定**。
    - 装：`node C:\Users\雍远\deepseek-harness\apps\cli\lib\bin.js plugin --profile web add "@hytime/dsh-thinking-effort@0.3.3"`。**pnpm 元数据缓存旧会把不带版本的 add 解析到旧版**（本次解析 0.3.1 而非 latest 0.3.3），显式 `@<version>` 钉住；刚发布未达 `minimumReleaseAge` 的版本会被供应链策略拦下，CLI 自动写入 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`，属正常放行记录而非错误。
    - 重启脚本坑：`restart-web.ps1` 内 `Start-Process` 全路径 powershell.exe 报「系统找不到指定的文件」（路径 Test-Path 却为真，原因未明）→ 外层改 `cmd /c start /b powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\DSHS\restart-web.ps1` 分离启动；**分离启动还保住当前回合不被「杀 web」中断**（脚本第 8 行强杀 `bin.js web` = 承载会话的进程，前台跑会丢交付）。脚本轮询只认 3080 返 200，**现匿名访问返回 401 会误判 TIMEOUT**——判断服务活着以「web 进程存活 + HTTP 有响应（401 也算）+ 会话可用」三证为准。
@@ -197,6 +260,7 @@ refs:
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 1.1.13 | 2026-10-13 | 补 frontmatter `version`（此前仅 `_meta.json` 有版本，本地无从读取）；「二.3」补打包前必过滤 `_backup/`/`*.bak-*`/`__pycache__`/`install-dir.txt`/`var/`（实测分发包内混入两个 `.bak`）；「七.4」补主包重打只能用官方 `Is-SyncIgnored` 规则＋以已提交发布版为基线的三条可失败判据＋禁止自比较；新增「七.10 先冻结再分发」「七.11 生成器不得记录自身产物哈希」 |
 | 1.1.12 | 2026-10-12 | 「三」补纯文档型 skill 四层检测适配：L1-L3 标 N/A，L4 真实冒烟＝逐文件 SHA256 逐字节一致＋清单一致＋frontmatter＋编码校验；明令禁止 version 号字符串匹配当验收（假绿灯） |
 | 1.1.11 | 2026-09-24 | 新增「七.9 dsh-thinking-effort 插件安装实战」：同名包 3 候选须问清；pnpm 缓存旧解析需显式 @version + minimumReleaseAgeExclude 放行；restart-web.ps1 的 Start-Process 坑改 `cmd /c start /b`、401 误判 TIMEOUT 改三证判定；marker 落 cwd 非 ~/.dsh（web 无 DSH_HOME）；官方验证口径 --dump-default-config + marker pid 对齐 |
 | 1.1.10 | 2026-09-06 | 「七.8」补充端到端实测法（api-gateway RPC：session.create/models/prompt/history，tool/call 的 data.name 为真实调用名）与卸载流程（remove 自动回退 deepseek-official、清空 @anysearch 残留目录、凭据保留、重启生效） |
@@ -212,6 +276,18 @@ refs:
 | 1.1.1 | 2026-08-24 | 归档定位铁律：仅一键启动相关通用运维技能进配套；个性化生产力技能（cad-scan-eye）只放根目录独立，绝不混入配套 |
 | 1.1.0 | 2026-08-24 | 新增「本技能自身：版本与自动进化」章节；明确为 dsh-launcher 配套技能；四层检测加入端到端产出验证（orchestrator JSON）；记录 dxf2dwg 用 `-o` 指定输出、子进程输出按 GBK 解码会炸需 `errors="replace"` |
 | 1.0.0 | 2026-08-24 | 初版：从安装 cad-scan-eye 的实战沉淀（环境同装 / 目录自适应 / 四层检测 / 文档路径同步） |
+
+## 脚本（本技能的判据/校验脚本）
+
+本技能的判据一律**可运行**，脚本放在技能目录 `scripts/`（运行而非读入）：
+
+| 脚本 | 用途 |
+|------|------|
+| `scripts/selfcheck_install_ops.py` | 本技能自身结构自检（frontmatter 字段集/版本三处一致/编码/包内无垃圾/包内容与技能树逐条哈希/①②③ 逐字节一致） |
+| `scripts/audit_companion_packages.py` | 审计全部配套包是否混入维护垃圾（`_backup/`、`*.bak*`、`__pycache__/`、`*.pyc`、`install-dir.txt`、任意层级 `var/`） |
+| `scripts/repack_launcher_main.py` | 按官方 `Is-SyncIgnored` 规则重打主包，并以 **git HEAD 发布版**为基线核三条判据 |
+
+（版本历史表已补回被误删的 1.1.12 行；该行对应的发布版本仍在 `git HEAD` 内嵌包内，可核。）
 
 ## 本机关键事实速查
 
@@ -233,3 +309,6 @@ refs:
 | GitHub 技能仓库 | `moonwellxh/DSH-Launcher`（**私有**，需 PAT；分支 `feature/github-sync-v1.1.65`，包在 `releases/<版本>/`） |
 | 执行工具 | Windows PowerShell 5.1（`$PSVersionTable` 确认）；读文件显式 `-Encoding UTF8` |
 | Z: 归档 | **已废弃**（2026-08-28，目录改名 `My skills xxx` 仅留档），分发走 GitHub 私有仓库，不再同步 Z: |
+
+**本技能条款分组声明**（使「每命名空间 ≤4」可核算）：带判定句/禁止句的独立编号项＝§0 铁律 4 条（「通用」组）＋§七 4 条（item 4／6／7／8，install-ops「通用」组）；即 (通用 8 / regulation 0 / document 0 / code 0)。
+**归类可机检边界**：脚本只能核「通用数 == 实际条数」；把某条判为「操作/惯例」而非条款属**作者判断**，故本声明公开可见、供审查者按宪章 §4 字面口径另行核算。
