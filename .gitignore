@@ -12,3 +12,7 @@ Desktop.ini
 
 # 机器特定安装路径（各机器不同，不入库）
 dsh-launcher/assets/install-dir.txt
+
+# 改前备份（2026-10-14）：本机回退点，不入库
+*bak-*
+*.bak
