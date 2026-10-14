@@ -12,6 +12,12 @@ REM ============================================================
 set "dshCmd="
 set "dshWebUrl=http://127.0.0.1:3080"
 
+REM --- WorkBuddy/CodeBuddy delete guard must never reach DSH (2026-10-14) ---
+REM --- That guard turns every node delete into a recycle-bin move and refuses it  ---
+REM --- past a per-turn budget, which breaks DSH image staging cleanup.            ---
+set "NODE_OPTIONS="
+set "CODEBUDDY_SAFE_DELETE_ENABLED=0"
+
 REM --- 定位 dsh 命令：仅同目录 dsh.cmd（绝对路径，禁止裸命令名） ---
 if exist "%~dp0dsh.cmd" set "dshCmd=%~dp0dsh.cmd"
 if not defined dshCmd (

@@ -1,4 +1,4 @@
----
+﻿---
 name: dsh-launcher
 description: >
   DeepSeek Harness（DSH）一键启动 + 系统托盘 安装/迁移技能。提供自适应安装脚本
@@ -343,6 +343,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
 | dsh-launcher（一键启动本体） | 1.1.93 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **配套技能 skill-craft-charter 升至 1.7.0**（references 按【构建期】/【维护期】重划去噪：新增 `references/自维护留痕.md` 收原 `方法论.md` §六 全块，`方法论.md` 21,722→9,841 B；台账只留机器数据、两条规范（留痕存放/标注、专章计量口径）上移构建期文件；`SKILL.md` §7 加「读法分工」；§0 仍四条铁律、§6 仍 16 项）。主包按官方 `Is-SyncIgnored` 规则重建（71 条目），本轮发布到 `releases\v1.1.93\`（不再原地重写旧版本目录）。 |
+| dsh-launcher（一键启动本体） | 1.1.94 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **启动器环境清理扩展**（2026-10-14）：WorkBuddy/CodeBuddy 经 NODE_OPTIONS 注入 node「安全删除」护栏（实为回收站转移 + 每轮 50 次删除额度），DSH 贴图落盘路径必须 unlink 暂存文件，额度用满后删除被拒、裸异常被 commands.ts 兜底成 session/agent-busy，表现为「贴图发不出去」；模板 mode-source.json / mode-path.json 的 __MODE_START_DSH_SERVER__ 新增 Remove-InjectedDeleteGuard + Start-DshProcess（置空 NODE_OPTIONS、置 CODEBUDDY_SAFE_DELETE_ENABLED=0，生效后还原宿主环境）；本机 D:\DSHS 启动器已按同一方式手工打补丁；验证：同一 unlink 在原环境报 SAFE_DELETE_BULK_CONFIRM_REQUIRED、清洁后 ok，子进程 safeDeleteShimLoaded=false；备份 .bak-deleteguard-20261014-180312；**待推送 GitHub**（本次未执行上传） |
 | dsh-launcher（一键启动本体） | 1.1.92 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **规则 0 payload 同步为现行形态**（2026-09-22，AGENTS.md 合并收口）：① `setup.ps1` 内嵌 `$ruleBlock` 由「旧标题 + 全项加粗 + 无末句括注」同步为**现行规则 0**（`## 1 规则 0（最高优先强制项）…`，末句含「（平台系统约束除外，见第 5 节）」），`$ruleMarker` 同步更新——新机写入的 AGENTS.md 与主文件规则 0 段逐字一致（块内容口径：不含 here-string 结构性首尾空行）；② `SKILL.md` 的「本机两处同源…以本技能为准」改为止于事实的「已同步…权威仍以 AGENTS.md 为准」，并注明新建机器上「见第 5 节」暂无指向；③ 行为三态实测（新建写入／已同步跳过／缺规则 0 追加）＋ PS 5.1 语法检查通过。本轮发布到 `releases\v1.1.92\`。 |
 | dsh-launcher（一键启动本体） | 1.1.91 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **修复内嵌配套包长期发旧件**（2026-09-19，审查 S1/S2）：① `dsh-sync.ps1` 的内嵌刷新由「本机版本 ≠ 内嵌版本」门控改为**对全部配套无条件重建**——原先「只改内容、未 bump 版本」的配套（pdf-parse-v3 去本机路径、adversarial-review 内容增长）内嵌包永不刷新，成品包长期发旧件，且旧件与新件 `_meta` 版本相同时引擎连分叉都检测不到；② 新增发布后一致性守卫（内嵌包 vs releases 包的条目名+大小，不一致即 warning）；③ 配套版本：pdf-parse-v3 **1.2.4**（去本机绝对路径 20 处）、adversarial-review `_meta` **0.1.0→0.1.2**（与其 SKILL.md frontmatter 对齐，消除自相矛盾）。本轮发布到 `releases\v1.1.91\`。 |
 | dsh-launcher（一键启动本体） | 1.1.90 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **运行期留痕不再随包分发 + 发布物去本机路径**（2026-09-19）：① `dsh-sync.ps1` 的 `Is-SyncIgnored` 与 `Test-SyncPurgePath` 新增 `var/` 规则——各技能 `var/`（审查快照/台账/任务脚本）属每台机器各自的运行期产物，不进包/不进源树，并从仓库源树清除历史遗留；技能脚本按三级回落自建目录，新机器缺 `var/` 不影响可用（备案：`var/registry/guide-clauses.json` 沉淀条款也因此不再跨机传播）。② 清理 `pdf-parse-v3` 发布物内的本机绝对路径（`C:\Users\<用户名>` 等 20 处，均在文档/prompt 中）。③ 本轮起发布到新版本目录 `releases\v1.1.90\`（不再原地重写旧版本目录）。 |
