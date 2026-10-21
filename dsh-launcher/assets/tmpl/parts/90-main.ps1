@@ -199,6 +199,88 @@ $webTimer.Start()
 
 
 
+# ---- CodeBuddy 网关控制（2026-10-21，托盘右键菜单）----
+$script:codeBuddyGatewayDir = Join-Path $PSScriptRoot 'codebuddy-gateways'
+$script:cbIntlPort = 4376
+$script:cbCnPort = 54962
+
+function Get-CodeBuddyListenerPid([int]$Port) {
+    try {
+        $conn = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop | Select-Object -First 1
+        if ($null -ne $conn) { return [int]$conn.OwningProcess }
+    } catch {}
+    return 0
+}
+
+function Get-CodeBuddyPortProcesses([int]$Port) {
+    try {
+        return @(Get-CimInstance Win32_Process -Filter "Name='codebuddy.exe'" -ErrorAction Stop |
+            Where-Object { $_.CommandLine -match ('--serve\s+--port\s+' + $Port + '(\s|$)') })
+    } catch { return @() }
+}
+
+function Update-CodeBuddyGatewayMenu {
+    if ($null -eq $script:miCbIntl -or $null -eq $script:miCbCn) { return }
+    foreach ($pair in @(
+        @{ Item = $script:miCbIntl; Port = $script:cbIntlPort; Label = '国际' },
+        @{ Item = $script:miCbCn; Port = $script:cbCnPort; Label = '国内' }
+    )) {
+        try {
+            $listener = Get-CodeBuddyListenerPid $pair.Port
+            if ($listener -gt 0) {
+                $pair.Item.Text = "CodeBuddy $($pair.Label) $($pair.Port)：运行中 (PID $listener)"
+            } elseif (@(Get-CodeBuddyPortProcesses $pair.Port).Count -gt 0) {
+                $pair.Item.Text = "CodeBuddy $($pair.Label) $($pair.Port)：启动中…"
+            } else {
+                $pair.Item.Text = "CodeBuddy $($pair.Label) $($pair.Port)：已停止"
+            }
+        } catch {
+            $pair.Item.Text = "CodeBuddy $($pair.Label) $($pair.Port)：检测失败"
+        }
+    }
+}
+
+function Start-CodeBuddyGateway([string]$Helper) {
+    $helperPath = Join-Path $script:codeBuddyGatewayDir $Helper
+    if (-not (Test-Path -LiteralPath $helperPath)) {
+        try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "找不到启动脚本：$helperPath", 'Error') } catch {}
+        return
+    }
+    try {
+        Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $helperPath) -WindowStyle Hidden
+    } catch {
+        try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "启动失败：$($_.Exception.Message)", 'Error') } catch {}
+    }
+}
+
+function Restart-CodeBuddyGateway([int]$Port, [string]$Label, [string]$Helper) {
+    $targets = New-Object 'System.Collections.Generic.HashSet[int]'
+    $listener = Get-CodeBuddyListenerPid $Port
+    if ($listener -gt 0) { [void]$targets.Add($listener) }
+    foreach ($p in @(Get-CodeBuddyPortProcesses $Port)) { [void]$targets.Add([int]$p.ProcessId) }
+    foreach ($procId in $targets) {
+        & taskkill /PID $procId /T /F 2>$null | Out-Null
+    }
+    try {
+        Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" -ErrorAction Stop |
+            Where-Object { $_.CommandLine -like "*$Helper*" } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    } catch {}
+    for ($i = 0; $i -lt 25; $i++) {
+        if ((Get-CodeBuddyListenerPid $Port) -eq 0) { break }
+        Start-Sleep -Milliseconds 200
+    }
+    if ((Get-CodeBuddyListenerPid $Port) -gt 0) {
+        try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "$Label 网关端口 $Port 仍被占用，未启动。", 'Error') } catch {}
+        Update-CodeBuddyGatewayMenu
+        return
+    }
+    Start-CodeBuddyGateway $Helper
+    Start-Sleep -Milliseconds 700
+    Update-CodeBuddyGatewayMenu
+    try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "$Label 网关正在重启（端口 $Port）。", 'Info') } catch {}
+}
+
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 # 第三行需要连点 5 次：点击该行时阻止菜单自动关闭（标志位 + ItemClicked 时取消关闭），点其它项/别处照常关闭
 $script:keepLauncherOpen = $false
@@ -352,6 +434,24 @@ Remove-Item -LiteralPath '$helperEsc' -Force -ErrorAction SilentlyContinue
     } catch { $notify.ShowBalloonTip(3000, 'DSH', "切换分支失败：$($_.Exception.Message)", 'Error') }
 })
 $menu.Items.Add('-') | Out-Null
+$script:miCbIntl = $menu.Items.Add('CodeBuddy 国际 4376：检测中…')
+$script:miCbCn = $menu.Items.Add('CodeBuddy 国内 54962：检测中…')
+$script:miCbIntl.Add_Click({
+    $r = [System.Windows.Forms.MessageBox]::Show("将重启 CodeBuddy 国际网关（端口 4376）。`nWeb UI 会短暂断开；国际网关启动时会等待 Clash 约 15 秒。`n`n确认继续？", 'CodeBuddy 网关', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
+    if ($r -eq [System.Windows.Forms.DialogResult]::Yes) {
+        try { Restart-CodeBuddyGateway -Port 4376 -Label '国际' -Helper 'start-intl.cmd' }
+        catch { try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "重启失败：$($_.Exception.Message)", 'Error') } catch {} }
+    }
+})
+$script:miCbCn.Add_Click({
+    $r = [System.Windows.Forms.MessageBox]::Show("将重启 CodeBuddy 国内网关（端口 54962）。`nWeb UI 会短暂断开。`n`n确认继续？", 'CodeBuddy 网关', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
+    if ($r -eq [System.Windows.Forms.DialogResult]::Yes) {
+        try { Restart-CodeBuddyGateway -Port 54962 -Label '国内' -Helper 'start-cn.cmd' }
+        catch { try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "重启失败：$($_.Exception.Message)", 'Error') } catch {} }
+    }
+})
+$menu.Add_Opening({ Update-CodeBuddyGatewayMenu })
+$menu.Items.Add('-') | Out-Null
 $miOpen  = $menu.Items.Add('打开 Web UI')
 $miTui   = $menu.Items.Add('终端界面 (TUI)')
 $miHead  = $menu.Items.Add('无界面模式 (Headless)')
@@ -373,6 +473,24 @@ $miExit.Add_Click({
     [System.Windows.Forms.Application]::Exit()
 })
 $notify.ContextMenuStrip = $menu
+$script:cbAutoTimer = New-Object System.Windows.Forms.Timer
+$script:cbAutoTimer.Interval = 4000
+$script:cbAutoTimer.Add_Tick({
+    try {
+        $script:cbAutoTimer.Stop()
+        foreach ($pair in @(
+            @{ Port = $script:cbIntlPort; Helper = 'start-intl.cmd' },
+            @{ Port = $script:cbCnPort; Helper = 'start-cn.cmd' }
+        )) {
+            if ((Get-CodeBuddyListenerPid $pair.Port) -eq 0 -and @(Get-CodeBuddyPortProcesses $pair.Port).Count -eq 0) {
+                Start-CodeBuddyGateway $pair.Helper
+            }
+        }
+        Update-CodeBuddyGatewayMenu
+    } catch {}
+})
+$script:cbAutoTimer.Start()
+
 
 # 启动后延迟检查更新：刷新顶部三行版本信息
 $script:newerAvail = $false

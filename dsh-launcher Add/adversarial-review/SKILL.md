@@ -63,7 +63,7 @@ metadata:
 
 **阶段 L2（对抗深审）**：仅覆盖热力图高分区（score=prior×signal×impact，细则见 `references/protocols.md` 4.7，仅在需要时读取）。对抗视角默认三类：边界条件、交叉引用一致性、外部硬约束符合性。并行判据满足时才分子审查者，仲裁规则见 protocols.md 4.6。
 
-**意见输出（必须遵守）**：每条意见必须给出 `anchor`（位置锚点）、`basis`（依据）、`confidence`；缺任一直接丢弃；禁止复制原文段落，引用一律用锚点；按严重度排序输出：阻断→严重→轻微→建议。
+**意见输出（必须遵守）**：每条意见必须给出 `anchor`（位置锚点）、`basis`（依据）、`confidence`；缺任一直接丢弃；禁止复制原文段落，引用一律用锚点；按严重度排序输出：阻断→严重→轻微→建议。**审查元信息（强制）**：每轮意见单头部须显示该轮 subagent 的 provider/model 与 reasoning_effort（未指定写"未指定·继承默认"），格式为表格行（轮次 | Provider/Model | Reasoning Effort）。
 
 ## 3. 修复闭环（默认模式）
 
