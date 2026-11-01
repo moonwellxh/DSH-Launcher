@@ -342,6 +342,8 @@ Copy-Item  (Join-Path $scriptDir '启动DSH-托盘.vbs')  (Join-Path $InstallDir
 Copy-Item  (Join-Path $scriptDir 'run-hidden.vbs')    (Join-Path $InstallDir 'run-hidden.vbs')    -Force
 Copy-Item  (Join-Path $scriptDir 'tray.ico')          (Join-Path $InstallDir 'tray.ico')          -Force
 Copy-Item  (Join-Path $scriptDir 'whale.ico')          (Join-Path $InstallDir 'whale.ico')          -Force
+Copy-Item  (Join-Path $scriptDir 'dsh-toast.ps1')       (Join-Path $InstallDir 'dsh-toast.ps1')       -Force
+Copy-Item  (Join-Path $scriptDir 'dsh-log.ps1')         (Join-Path $InstallDir 'dsh-log.ps1')         -Force
 # dsh-sync.ps1 / configure-git-credentials.vbs：读源 → 替换 __GH_REPO__/__GH_BRANCH__（单一来源 sync-defaults.json）→ 按各自编码写
 $syncTpl = [System.IO.File]::ReadAllText((Join-Path $scriptDir 'dsh-sync.ps1'), (New-Object System.Text.UTF8Encoding($false)))
 $syncTpl = $syncTpl.Replace('__GH_REPO__', $ghRepoDefault).Replace('__GH_BRANCH__', $ghBranchDefault)

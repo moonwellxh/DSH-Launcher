@@ -133,7 +133,7 @@ function Show-UpgradeDialog {
             Invoke-DshRpc 'session/prompt' @{ request = @{ requestId = $reqId; sessionId = $sid; mode = 'queue'; content = @(@{ type = 'text'; text = $promptText }) } } | Out-Null
             $form.Close()
             Open-Url $webUrl
-            $notify.ShowBalloonTip(3000, 'DSH 升级', '升级任务已提交运行。', 'Info')
+            Show-DshNotice(3000, 'DSH 升级', '升级任务已提交运行。', 'Info')
         } catch {
             [System.Windows.Forms.MessageBox]::Show("提交失败：$($_.Exception.Message)", $Title, 'OK', 'Error')
         }

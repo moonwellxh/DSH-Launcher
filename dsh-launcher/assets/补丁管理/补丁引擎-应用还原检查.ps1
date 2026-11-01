@@ -14,6 +14,7 @@
 param(
     [string]$Manifest = '',
     [string]$ProfileDir = '',
+    [string]$DshRoot = '',
     [string]$BackupRoot = '',
     [switch]$Restore,
     [switch]$CheckOnly
@@ -23,14 +24,41 @@ $ErrorActionPreference = 'Stop'
 
 function Step([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
 
-# ---------- 定位 DSH web profile node_modules ----------
+# ---------- 定位补丁目标根（2026-10-31 适配 DSH 0.2.x） ----------
+# 0.1.x：~\.dsh\profiles\node_modules\@deepseek-ai\<包>\lib\*.js
+# 0.2.x：profile 不再携带 @deepseek-ai 包（bundles 由源码树提供），
+#        目标是 <DSH 根>\packages\...\<包>\lib\*.js，由公共库按包名反查。
+function Find-DshRoot([string]$Explicit) {
+    if ($Explicit -and (Test-Path -LiteralPath (Join-Path $Explicit 'packages'))) { return $Explicit }
+    if ($env:DSH_ROOT -and (Test-Path -LiteralPath (Join-Path $env:DSH_ROOT 'packages'))) { return $env:DSH_ROOT }
+    if ($env:USERPROFILE) {
+        $g = Join-Path $env:USERPROFILE 'deepseek-harness'
+        if (Test-Path -LiteralPath (Join-Path $g 'packages')) { return $g }
+    }
+    # 从启动器生成物兜底：assets\install-dir.txt → <安装目录>\DSH-tray.ps1 里的 $dsRoot
+    try {
+        $idf = Join-Path (Split-Path -Parent $PSScriptRoot) 'install-dir.txt'
+        if (Test-Path -LiteralPath $idf) {
+            $inst = ([System.IO.File]::ReadAllText($idf, [System.Text.Encoding]::UTF8)).Trim()
+            $tray = Join-Path $inst 'DSH-tray.ps1'
+            if (Test-Path -LiteralPath $tray) {
+                $m = [regex]::Match([System.IO.File]::ReadAllText($tray, [System.Text.Encoding]::UTF8), '\$dsRoot\s*=\s*''([^'']+)''')
+                if ($m.Success -and (Test-Path -LiteralPath (Join-Path $m.Groups[1].Value 'packages'))) { return $m.Groups[1].Value }
+            }
+        }
+    } catch {}
+    return ''
+}
+if (-not $DshRoot) { $DshRoot = Find-DshRoot '' }
+if ($DshRoot) { $env:DSH_PATCH_DSH_ROOT = [IO.Path]::GetFullPath($DshRoot) }
 if (-not $ProfileDir) {
     $cand = Join-Path $env:USERPROFILE '.dsh\profiles\node_modules'
     if (Test-Path -LiteralPath $cand) { $ProfileDir = $cand }
 }
-if (-not $ProfileDir -or -not (Test-Path -LiteralPath $ProfileDir)) {
+$hasProfileRoot = ($ProfileDir -and (Test-Path -LiteralPath $ProfileDir))
+if (-not $DshRoot -and -not $hasProfileRoot) {
     # 非源码/profile 结构安装时补丁无目标可打：警告并跳过（不报错、不撞墙）
-    Write-Host '警告：未找到 DSH web profile 的 node_modules（默认 ~\.dsh\profiles\node_modules），' -ForegroundColor Yellow
+    Write-Host '警告：未找到补丁目标根（DSH 源码树 packages 与旧 profile node_modules 都不存在），' -ForegroundColor Yellow
     Write-Host '      本机可能非源码结构安装，补丁跳过未应用。' -ForegroundColor Yellow
     exit 0
 }
@@ -56,15 +84,21 @@ if ($patches.Count -eq 0) {
     exit 0
 }
 
-Write-Host "DSH profile : $ProfileDir"
+if ($DshRoot) { Write-Host "DSH 根      : $DshRoot" }
+if ($hasProfileRoot) { Write-Host "DSH profile : $ProfileDir" }
 Write-Host "备份根      : $BackupRoot"
 Write-Host "清单        : $Manifest（补丁数：$($patches.Count)）"
 
 # ---------- 当前 DSH 版本（补丁兼容性检查用） ----------
 $currentDshVersion = ''
-$dshPkg = Join-Path $ProfileDir '@deepseek-ai\dsh\package.json'
-if (Test-Path -LiteralPath $dshPkg) {
-    try { $currentDshVersion = [string](([System.IO.File]::ReadAllText($dshPkg, [System.Text.Encoding]::UTF8)) | ConvertFrom-Json).version } catch {}
+$verCandidates = @()
+if ($DshRoot) { $verCandidates += (Join-Path $DshRoot 'apps\cli\package.json') }
+if ($hasProfileRoot) { $verCandidates += (Join-Path $ProfileDir '@deepseek-ai\dsh\package.json') }
+foreach ($vc in $verCandidates) {
+    if ($currentDshVersion) { break }
+    if (Test-Path -LiteralPath $vc) {
+        try { $currentDshVersion = [string](([System.IO.File]::ReadAllText($vc, [System.Text.Encoding]::UTF8)) | ConvertFrom-Json).version } catch {}
+    }
 }
 if ($currentDshVersion) { Write-Host "当前 DSH 版本 : $currentDshVersion" }
 
@@ -81,7 +115,7 @@ try {
     }
 } catch {}
 try {
-    $dsAiDir = Join-Path $ProfileDir '@deepseek-ai'
+    $dsAiDir = if ($hasProfileRoot) { Join-Path $ProfileDir '@deepseek-ai' } else { '' }
     if (Test-Path -LiteralPath $dsAiDir) {
         $dsAiItem = Get-Item -LiteralPath $dsAiDir -Force -ErrorAction Stop
         $isReparse = ($null -ne $dsAiItem.LinkType) -or [bool]($dsAiItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)

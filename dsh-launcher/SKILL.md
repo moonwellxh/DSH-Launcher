@@ -106,6 +106,9 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 | `启动DSH-托盘.cmd` | 一键托盘（跳过菜单，直接启动 + 开浏览器；**已自隐藏窗口**：首次进入经 `run-hidden.vbs` 隐藏重入，双击不再闪命令行窗口） |
 | `启动DSH-托盘.vbs` | 一键托盘（**零命令行窗口**，wscript 直启 DSH-tray.ps1，推荐双击入口；配套 `run-hidden.vbs` 供 .cmd 自隐藏重入） |
 | `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「启动托盘 x.x.x 版（点击可更新/已是最新）」（点击**与 GitHub 双向同步**（发布级）：配置优先环境变量 `DSH_SYNC_REPO` / `DSH_SYNC_BRANCH` / `DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 内置默认（repo=`moonwellxh/DSH-Launcher`、branch=`main`）；网络自动探测系统代理、直连↔代理双路回退（命令级 `-c` 注入，不改全局 git 配置）；git 全程非交互（禁终端提示 + 禁 GCM 弹窗），失败按类给出可操作提示（未装 git / 认证缺失或失效 / 仓库分支 404 / 网络不通 / 非快进）；以仓库源树 `dsh-launcher/` 为比对对象逐文件内容比对（文本先归一化 CRLF→LF 再哈希，避免 autocrlf 造成"同内容不同哈希"；跳过机器特定文件 install-dir.txt），方向**永不自动判定**：引擎只按版本号/时间戳/内容差异给出**建议**，由用户在弹出的方向选择框自行决定 上传到 GitHub / 拉取 GitHub 版本 / 取消，确认后才执行（绝不自动执行方向；2026-09-05 规则）。上传方向 = 更新源树 + 发布 **主包+全部配套** 到 `releases\<版本>\` + git 提交推送（`HEAD:<branch>`，token 经 http.extraheader 仅内存注入、不落盘不打印）并校验，一致则跳过，时间戳相同但内容不同则按 **git 提交时间 vs 本地修改时间**分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版；同步带互斥锁防并发；缓存损坏自动重建）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
+| `dsh-toast.ps1` | 右下角自绘提示窗（2026-10-26）：`-InstallDir <目录> [-Title .. -Text .. -Seconds 5]`；「硬重启托盘」起点用它提示，不依赖系统通知设置 |
+| `dsh-tray.log` | 托盘提示留痕（运行期生成，非分发产物）：每张卡片一行 + 硬重启开始/结果；超 1 MB 轮转 `dsh-tray.log.1` |
+| `dsh-log.ps1` | 托盘日志查看器（2026-10-26）：`-Tail N` / `-Level WARN,ERROR` / `-Event restart.start,restart.setup` / `-Summary` / `-Raw`；解析规则唯一实现 |
 | `dsh.cmd` | CLI 入口包装（`--version` / TUI / Headless） |
 | `whale-white.ico` / `whale-white.png` | 托盘图标（默认，白色描边鲸鱼版，镂空填白/下半白底） |
 | `tray.ico` / `whale.ico` | 备用图标（自动回退） |
@@ -121,23 +124,67 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
   服务一律加 `--no-open`（源码树 `web --no-open`；PATH 模式 `dsh web --no-open`），
   浏览器**只由托盘就绪后开一次**（`browserOpened` 守卫）。避免老 DSH/坏安装下服务反复
   重启导致浏览器疯狂弹出。
-- **打开主应用优先（2026-08-25 新增，1.1.54 实测定型）**：托盘双击 / 「打开 Web UI」优先
-  打开用户已手动「安装为应用」的 PWA 主应用（独立窗口、聚焦不开多个、界面与主应用一致），
-  而非普通浏览器标签页。机制：`Open-DshApp` 读 Edge `Preferences.web_apps.daily_metrics[
-  "http://127.0.0.1:3080/"].installed` 判断是否已装 → 已装则用 Win32 枚举找已有 PWA 窗口，
-  发 `PostMessage(WM_SYSCOMMAND, SC_RESTORE)` 恢复最小化 + `SetForegroundWindow` 置顶
-  （实测 `--app-id` 会开新窗口不可靠，SC_RESTORE 对 Edge PWA 有效）；窗口不存在才
-  `msedge --app-id=hgiemfgfjhalibdoboikeiepnnjapnpc` 启动；未装/无 Edge 则回退普通浏览器。
-  PWA 需用户在 Edge 地址栏手动「安装为应用」一次（Edge 无静默安装命令行）；setup.ps1
-  检测到 Edge 会附加建 `DSH应用.lnk` 桌面快捷方式（指向 `msedge --app-id=...`，装了 PWA
-  后双击即开主应用）。**引导式安装**：未装 PWA 时双击托盘不默默开普通网页，而是打开 Edge
-  访问 3080（地址栏出现安装图标）+ 气泡提示「点安装图标安装为独立应用」，用户点一下即完成；
-  同一次托盘生命周期只提示一次（`$script:pwaGuideShown` 标记），装好后下次双击即走聚焦逻辑。
+- **打开 DSH 主窗口（2026-10-25 修正，1.1.95 待发布）**：托盘双击 / 「打开 Web UI」/ 就绪后自动开浏览器
+  都走 `Open-Url` → `Open-DshApp`：已有 DSH 窗口 → Win32 枚举找窗口 + `PostMessage(WM_SYSCOMMAND,
+  SC_RESTORE)` 恢复 + `SetForegroundWindow` 置顶（不开多个、不重复加载页面）；没有窗口 →
+  **默认模式** = `msedge --app-id=<已装 PWA>`（无标题栏的独立应用窗口），每 250ms 轮询窗口、最多 12 秒，
+  窗口一出现就置顶返回（用户随后关掉也不会补开）。**降级模式** = 12 秒内一个窗口都没枚举到
+  （PWA 起不来，或标题一直不就位——例如 cookie 过期后的 401 页）时，再发一次 `msedge --app=<带令牌 URL>`
+  （带标题栏的应用窗口，页面能用、观感差一档），再轮询 6 秒。两条都没窗口才回退默认浏览器。
+  - **为什么只发一次**：旧实现先 `--app=URL` 睡 4 秒、找不到窗口再发 `--app-id` 重试一次。用户在
+    这 4 秒内关掉刚弹出的窗口时第二次启动照发——表现就是「关掉以后它自己又弹一个」；而且两次入口
+    不是同一个东西：`--app=<URL>` 在本机被 Edge 当成普通导航，开出来的是**浏览器网页版**（有标签栏
+    + 地址栏），`--app-id` 才是已装 PWA 的**应用窗口**（无标签栏/地址栏）。同一个按钮弹出两种 UI
+    （2026-10-25 用户两次报障）。
+  - **入口取舍（用户 2026-10-25 指定）**：无标题栏的已装 PWA 窗口是默认，带标题栏的应用窗口只作兜底
+    降级。托盘与桌面 `DSH应用.lnk` 都以 `--app-id` 为主，外观一致；
+    令牌用 Chromium 的 `--app-launch-url-for-shortcuts-menu-item=<带令牌 URL>` 捎进去：Edge 认就
+    按带令牌入口打开、顺带刷新 30 天认证 cookie；不认就退回 app 自己的 `start_url`（等于旧版
+    `--app-id` 行为）。2026-10-25 本机实测（Edge 156）：带该开关启动得到的确实是应用窗口（不是浏览器
+    网页版）、页面正常加载；至于它是否真把令牌 URL 带进去了，cookie 有效时分不出来，属"认了更好、
+    不认不更差"。
+  - **兜底语义**：默认入口里只要「窗口出现并置顶」就返回成功——用户在轮询期内关掉也不会补开。
+    只有默认入口 12 秒内**一个窗口都没枚举到**才降级；降级也拿不到窗口才返回 `$false`，交
+    `Open-Url` 用默认浏览器做最后一次兜底（保证一定有页面）。已知残留：若在窗口标题就位前
+    （通常 <1 秒）就把它关掉，可能仍会出现降级窗口——这是"必须保留兜底"的代价，概率很低。
+  - **未装 PWA 时**：双击托盘 /「打开 Web UI」不默默开普通网页，而是打开 Edge 访问 3080 +
+    气泡提示「点安装图标安装为独立应用」，`$script:pwaGuideShown` 保证同一次托盘生命周期只提示一次。
 - **Web 看护重启上限**：自动重启连续失败 3 次 → 停止自动重启并气泡提示
   「DSH Web 反复启动失败（可能 DSH 版本过旧或安装异常），请升级 DSH」。服务恢复后计数
   归零。**老 DSH + 新启动器**场景：补丁被兼容检查跳过（正常），若 web 起不来即升级 DSH。
 - **托盘手动关闭**：托盘脚本记录 3080 端口的监听 PID，右键「退出并停止 DSH」时
   `taskkill /PID <pid> /T /F` 停止整棵进程树。
+- **硬重启托盘（2026-10-26 对抗性审查后重做，1.1.96）**：点击先弹确认框，写明四步副作用
+  （结束 dsh web 进程树＝当前 AI 回合中断 / 只关 DSH 应用窗口 / 重跑安装脚本并可能改写
+  `~/.dsh/AGENTS.md` 与配套技能 / 重启托盘）。执行链：① `Test-DshListenerIdentity` 先验 3080
+  属主（进程名 `node|dsh` → 命令行含 `bin.js|dsh|deepseek-harness` → 父进程是托盘），判不准就
+  **不杀**并在气泡里说明；② `CloseDshWindows` 只关 Edge 进程承载、且标题不以 `- Microsoft Edge`
+  结尾的应用窗口（普通浏览器窗口与记事本/Word 等一律不碰）；③ setup.ps1 先 `Test-Path`，缺失则
+  只重启托盘不重渲染；④ helper 用 `-PassThru` + `Wait-Process -Timeout 300` 跑 setup，回收退出码，
+  结果写 `dsh-restart-status.txt`（`setup=done|failed|timeout|missing`）；⑤ 新托盘启动时读该文件，
+  非 done 或带 notes 才弹气泡（成功静默），读完即删。⑥ **起点提示（自绘弹窗）**：helper 在结束托盘之前启动安装目录里的 `dsh-toast.ps1` —— 右下角
+  无边框卡片（鲸鱼图标 +「DSH 正在重启」+ 说明，5 秒自动消失，`WS_EX_NOACTIVATE` 不抢焦点）。
+  **为什么不用系统通知**：本机 `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\
+  EnableBalloonTips = 0`，`ShowBalloonTip` 一律不显示；WinRT Toast 在本机也不落地。故改为自绘窗口，
+  不依赖通知设置。
+  **全部托盘提示统一走它**（2026-10-26 用户确认）：新增 `Show-DshNotice(超时, 标题, 正文, 图标)`，
+  参数顺序与原 `ShowBalloonTip` 一致，模板里 39 处调用点已全部替换（就绪/启动失败/看护反复失败/
+  已恢复/硬重启结果/升级与同步/CodeBuddy 网关/PWA 引导/打开失败等）。卡片**单实例**（按安装目录
+  的 pid 文件，新消息顶掉旧的，不叠加）、按级别着色（Info 白 / Warning 黄 / Error 红）、正文超长
+  自动加高。`dsh-toast.ps1` 缺失时才退回 `ShowBalloonTip`（其它机器气泡是好的）。
+  - **留痕（2026-10-26 用户要求）**：卡片是瞬时弹窗、不进通知中心，故每张卡片都往安装目录的
+    `dsh-tray.log` 追加一行 `yyyy-MM-dd HH:mm:ss [Info|Warning|Error] 标题 | 正文`（UTF-8 无 BOM；
+    正文换行折成空格；超 1 MB 轮转 `dsh-tray.log.1`）。硬重启的 helper 另记两行：
+    `[Info] 硬重启托盘：开始（旧托盘 PID …；setup=…）` 与 `[Info|Warning] 硬重启托盘：setup=done|failed|timeout|missing（exit=…）notes=…`。
+  已知残留：托盘仍把「3080 有监听」当作
+  「DSH 已在跑」，港口被第三方占用时不会自起 dsh web（属既有设计，另行评估）。
+- **日志与留痕（后续维修必读）**：托盘所有提示是自绘卡片（不进通知中心），**每张卡片自动写一行**
+  到 `<安装目录>\dsh-tray.log`，格式 `[dsh-tray] ts=<ISO8601+时区> level=<INFO|WARN|ERROR>
+  event=<notify|restart.start|restart.setup> …`（固定前缀、`key=value`、超 1 MB 轮转 `.1`）；
+  硬重启另记 `restart.start`/`restart.setup` 两行并用 `run` 关联、带 `duration_ms`。
+  读日志用 `<安装目录>\dsh-log.ps1`（`-Tail/-Level/-Event/-Summary/-Raw`），不要自造解析；
+  改提示必须走 `Show-DshNotice`，否则"有卡片无留痕"。完整字段表、级别语义、偏离声明与改动点位见
+  `docs\日志与留痕-维护说明.md`（本技能目录内）。
 - **编码约定**：`.bat/.cmd` 用 GBK + CRLF（含中文时）、无 BOM；`.ps1` **含中文必须 UTF-8 带 BOM**（否则 Windows PowerShell 5.1 按 ANSI 解析中文会报语法错误），纯 ASCII 的 .ps1 任意编码均可（推荐仍带 BOM）。`setup.ps1` 已按此约定写出生成物，不要手工改写生成后的脚本。
 - **写 .ps1/.bat/.cmd 前先载入 `charset-pitfalls` 技能**（全局中文编码避坑汇总，
   含本技能全部编码约定与踩坑记录），动手前对照编码表，不要等出乱码再查。
@@ -263,6 +310,35 @@ package.json 版本，与清单 `compatibleDsh` 字段比对，不在列表即�
 junction 指向源树构建产物），导致前端渲染故障且 RPC 直连正常，极难排查。详见
 「补丁自动载入清单」一节的教训。
 
+## 启动链铁律（2026-11-01 用户规定，优先级高于本文件其余流程约束）
+
+任何**启动链**改动——`DSH-tray.ps1` 及其模板片段 / `setup.ps1` / 计划任务与自启动项 /
+客户端插件注册（profile 的 `package.json`、`cordis.patch.yml`）/ 生成器里的 here-string /
+一键入口脚本——**合入前必须过独立对抗性审查**（载入 `adversarial-review`，用独立子审查者，
+只喂对象与事实、不喂作者推理；禁止用作者上下文自审），且**必须同时留下「故障时不需要 AI 在场」
+的自救手段**。
+
+理由（用户原话的意思）：用户只有 DSH 界面这一个沟通渠道；启动链一坏，用户就没法把故障告诉
+维护者，只能找外部手段救。所以「能不能启动」与「坏了能不能自己救」两条都要过。
+
+通过判据沿用默认：**阻断清零 ∧ 严重清零**。交付时三件事缺一不可：
+① 审查结论（阻断/严重各几条、谁审的）；② 自救入口（当前为 `D:\DSHS\DSH-rescue.cmd`，
+桌面快捷方式「DSH 紧急恢复」；功能：清残留 → 直启 dsh web → 失败则 `dsh rescue --from-default-profile web`）；
+③ 回滚点（秒级时间戳备份路径 + 还原命令）。
+
+已知两次真实事故（写进铁律的原因，勿重犯）：helper 生成时 `$Rec` 未转义 → 语法错误使硬重启
+后无人拉起托盘；客户端插件写成裸 ESM 而非 `window.__ModuleLoader__.load({id,factory})` →
+界面报 `Failed to load plugins`。
+**必须按用户的编程范式落地（2026-11-01 用户追加）**：修改启动器（本技能中任何会进入启动路径的
+文件——`setup.ps1`、`assets\tmpl\` 模板片段、`DSH-tray.ps1` 生成物、计划任务与入口脚本、
+profile 的 `package.json` / `cordis.patch.yml`）时，**无论是否当次对话**，一律按 `guide-dev`
+的编程范式执行（判档 → 设计先落纸 → 实现 → 独立对抗审查 → 验证），并且**必须"修复无误后再运行"**：
+语法解析、临时目录生成、`-CheckOnly` 冒烟这些验证通过之前，不得把改动生成到真实安装目录，
+不得重启托盘或服务。
+
+**可逆留痕（同一规定）**：每次改动都要留下可回滚的痕迹——改前用秒级时间戳备份（放对象同级的
+`_bak\` 或 `_backup\`，格式 `原名.bak-yyyyMMdd-HHmmss`）、写明回滚命令、并在
+`~/.dsh/AGENTS-changelog.md` 记一条变更记录。三样缺一视同未完成，不得上机。
 ## 调试纪律（铁律，2026-08-25 事故教训）
 
 **托盘/启动器脚本调试，绝不在运行中的生成物上直接编辑。** 事故复盘：调试双击引导时，
@@ -342,8 +418,13 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
-| dsh-launcher（一键启动本体） | 1.1.93 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **配套技能 skill-craft-charter 升至 1.7.0**（references 按【构建期】/【维护期】重划去噪：新增 `references/自维护留痕.md` 收原 `方法论.md` §六 全块，`方法论.md` 21,722→9,841 B；台账只留机器数据、两条规范（留痕存放/标注、专章计量口径）上移构建期文件；`SKILL.md` §7 加「读法分工」；§0 仍四条铁律、§6 仍 16 项）。主包按官方 `Is-SyncIgnored` 规则重建（71 条目），本轮发布到 `releases\v1.1.93\`（不再原地重写旧版本目录）。 |
+| dsh-launcher（一键启动本体） | 1.1.99 | 0.2.1-rc.2（并保留 0.1.5-rc.1、0.1.1-rc.2、0.1.0-rc.7） | **启动链两轮对抗审查后的加固**（2026-11-01，本地 GLM-5.3-Flash + 外包 CodeBuddy 双份审查）：① 互斥锁：首次 `WaitOne` 加 try/catch，`AbandonedMutexException` 按「已拿到锁」处理（上一版误判为忙，导致"已有托盘时再双击"杀掉旧托盘后自己退出）；② 交接判据重做：等待者写 `.dsh-handoff.<PID>.lock`，被任务拉起且已提权的托盘在 `$notify.Visible=$true` 之后写 `dsh-tray.ready`（内含 pid），等待者只在「自己标记消失 ∧ ready 新鲜 ∧ ready 里的 pid 存活」时 exit 0，超时 20 秒清理后降级启动；清理动作移到抢到锁之后，写完 ready 再清一次迟到标记；③ `schtasks` 加 `Wait-Process -Timeout 20` 并在超时/抛错时回收进程；④ 锁到手后统一重探 `$listener`（覆盖三条拿锁路径）；⑤ 看护里的 `Start-DshServer` 也包 try/catch；⑥ 「退出并停止 DSH」先 `Test-DshListenerIdentity` 再 `taskkill`；⑦ 属主判定补 `bin.ts`、去掉裸 `dsh`，判不准时用启动令牌兜底（只认 302/303 且要求 `Set-Cookie` 含 `dsh-auth-`，禁用系统代理）；⑧ 启动失败文案区分「找不到 Node」与「启动抛异常」，文案压到 41 字避免被卡片裁切；⑨ 外来端口/启动失败时不再叠第二张气泡。补丁02 三档缓存头已在活服务验证（index `no-store`、内容寻址 `immutable`、普通静态 `no-cache`+ETag 且条件请求 304）。 |
+| dsh-launcher（一键启动本体） | 1.1.98 | 0.2.1-rc.2（并保留 0.1.5-rc.1、0.1.1-rc.2、0.1.0-rc.7） | **补丁链适配 DSH 0.2.x 源码树布局**（2026-10-31，用户要求「都适配到现有版本」）：① 目标定位重写——0.2.x 的 profile 不再携带 `@deepseek-ai` 包（bundles 改由源码树提供），引擎原先只认 `~\.dsh\profiles\node_modules`，于是 setup 报「未找到 DSH web profile 的 node_modules」直接跳过。现改为：先试旧 profile 布局，再按 `@deepseek-ai\<包>\<剩余路径>` 到 `<DSH 根>\packages` 下按 package.json 的 `name` 反查包目录（本机扫到 342 个包）；根定位链 `-DshRoot` → `$env:DSH_ROOT` → `%USERPROFILE%\deepseek-harness` → `assets\install-dir.txt` → 托盘 `$dsRoot`；版本改读 `<根>\apps\cli\package.json`。② 修两处实现缺陷：`Split-Path -LiteralPath ... -Parent` 在 PS7 参数集不成立，异常被逐项 catch 吞掉导致包映射恒为空（改用 `[IO.Path]::GetDirectoryName`）；junction 检查里用 `return` 在脚本作用域直接退出整个引擎（改为条件表达式）。③ 补丁02（前端缓存 no-store）按 0.2.1-rc.2 重做：改 `packages\host\frontend-static\src\index.ts` → tsc → tsdown 取真实构建产物做载荷（5938 B，base 保持 0.2.x 的 `./`），源码增量留档 `源码增量-前端缓存no-store-0.2.1-rc.2.patch`，随后 `git checkout` 还原源码保持工作树干净；行为验证 7/7（index no-store / 内容寻址 immutable / 普通资源 no-cache+ETag / 命中 304 / 旧 ETag 仍 200 / 越界 403 / 缺失 404）。④ 档案柜补丁全部废弃：上游 0.2.x 已原生提供 `workspace/archiveSession` + `workspace/unarchiveSession` 与侧边栏功能，`补丁03` 置 `enabled=false` 并注明载荷是 0.1.5-rc.1 构建产物、禁止在 0.2.x 启用（用户 2026-10-31 确认放弃）。⑤ 引擎实际应用验证：备份目录存上游原件（无缓存逻辑）、`lib/index.js` 被换成载荷、`-CheckOnly` 与 setup.ps1 集成均正常。**待推送 GitHub**（本地已 bump `_meta.json` 至 1.1.98） |
+| dsh-launcher（一键启动本体） | 1.1.97 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **修「托盘一显示就退出」+ 新增入口自动提权**（2026-10-31，用户报障）：① 根因：2026-10-26 把 `$notify.ShowBalloonTip(...)`（.NET 方法，括号式正确）换成 PowerShell 函数 `Show-DshNotice(...)` 时没改调用语法——PowerShell 把整张参数表当成**一个 Object[]** 交给第一个参数 `[int]$Timeout`，绑定失败抛终止性错误 → runspace 结束，托盘图标刚出现就消失、dsh web 留在后台。**34 处调用点全部踩中**，第一次弹卡片必死（就绪卡/「已在运行」卡）。修法在 `parts\10-utils.ps1`：第一个参数改收 `[object]`，体内按数组拆回四参并解析成整数 `$tms`（命名式调用仍兼容），气泡回退路径同步改用 `$tms`。② 新增入口提权守卫（`parts\90-main.ps1`，`$CheckOnly` 除外）：非管理员启动时改投「最高权限」计划任务 `DSH-Tray-Elevated` 后立即退出，使所有入口（桌面快捷方式 / 启动DSH-托盘.vbs / .cmd / 启动DSH.bat / 直接 `-File`）最终都落到提权托盘；`-OpenBrowser` 由**未提权 stub** 打开浏览器（避免管理员 Edge 与用户浏览器会话分家）；**任务未登记时照常以当前权限运行，不阻断启动**（新机器需手工登记或后续让 setup.ps1 自动建）。③ 本机配套：计划任务 `DSH-Tray-Elevated`（登录触发 / Highest / Interactive / IgnoreNew / 执行时限无 / 失败重启 3 次），并把 Startup 里的普通权限 `DSH-Tray-Autostart.lnk` 移走备份到 `_bak\`，避免两套自启动互抢。验证：`D:\DSHS` 前台跑 25 s 仍存活、stderr 空、`dsh-tray.log` 写出卡片行；`_tools\probe-elevated.ps1` 读令牌 TokenIsElevation 实测 `DSH-TRAY`/`DSH-WEB`=ELEVATED、`explorer`=NOT-elevated（对照有效性）；**用 Limited 计划任务模拟普通权限入口**：stub 退出码 0、最终托盘 ELEVATED、日志有对应记录；生成物 PARSE-OK、BOM 与 CRLF 保持、模板改动后 `fffd=0`。**待推送 GitHub**（本地已 bump `_meta.json` 至 1.1.97） |
+| dsh-launcher（一键启动本体） | 1.1.96 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **「硬重启托盘」按对抗性审查结论重做**（2026-10-26，独立子审查者 DeepSeek/deepseek-flash 判阻断 0／严重 7）：① 加确认框（写明会中断当前 AI 回合、会重跑安装器）；② 结束前用 `Test-DshListenerIdentity` 校验 3080 属主（实测源码树模式命令行是 `node.exe apps/cli/lib/bin.js web --no-open`，不含 dsh 字样，故判定链加了 `bin.js` 与父进程托盘两条），判不准不杀；③ `CloseDshWindows` 只关 Edge 进程且标题不以 `- Microsoft Edge` 结尾的窗口（原来按标题 Contains 会关掉用户整个浏览器窗口、甚至记事本）；④ setup.ps1 先 `Test-Path`，技能被移动时只重启托盘不重渲染；⑤ helper 加 `-PassThru`+`Wait-Process -Timeout 300` 并回收退出码，结果写 `dsh-restart-status.txt`，新托盘启动时读并如实气泡（成功静默）；⑥ 外层 `catch {}` 改为弹气泡。验证：C# 类独立编译通过、身份判定 4 例（dsh web→True／msedge、不存在、0→False）、helper 三态（exit 3→failed／exit 0→done／缺失→missing）均写 4 行状态并成功拉起托盘、回执块三态（failed 弹、done 静默、missing 弹）、生成物 PARSE-OK + 产物校验 exit=0。⑦ 起点提示与全部托盘提示统一改为自绘弹窗 `dsh-toast.ps1`（新增 `Show-DshNotice`，模板 39 处调用点全部替换；单实例、按级别着色、长文自动加高）（本机 EnableBalloonTips=0，系统气泡与 Toast 都不显示；自绘卡片右下角 5 秒、不抢焦点），helper 在杀托盘前启动它；setup.ps1 新增部署该产物。已 DPI 感知截图与进程侧双重验证（helper 确实拉起 toast 进程）。**待推送 GitHub**（未 bump `_meta.json`） |
+| dsh-launcher（一键启动本体） | 1.1.95 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **修「打开 Web UI 关掉后自己又弹一个窗口」**（2026-10-25，用户报障）：`Open-DshApp` 冷启动原为「`--app=<令牌 URL>` 睡 4 秒 → 找不到窗口再发 `--app-id` 重试一次」两段逻辑——用户在这 4 秒内关掉刚弹出的窗口时第二次启动照发，且两次入口画出的窗口外观不同（前者普通应用窗口带标题栏、后者已装 PWA 窗口无标题栏）。现改为**两级**：默认 `--app-id=<已装 PWA>`（无标题栏 PWA 窗口，250ms×48≈12 秒轮询）+ 降级 `--app=<令牌 URL>`（带标题栏应用窗口，250ms×24≈6 秒）：见到窗口即置顶返回（用户随后关掉也不补开）；默认入口 12 秒内一个窗口都没枚举到才降级，降级 6 秒也无窗口才返回 `$false`，由 `Open-Url` 用默认浏览器做最后兜底。删除 `$tryArgs` 两段重试；入口固定 `--app-id`（与桌面 `DSH应用.lnk` 同源，两个入口外观一致），令牌经 `--app-launch-url-for-shortcuts-menu-item` 捎入（认则刷新 30 天 cookie，不认退回 start_url）。另修：`--app=URL` 在本机被 Edge 当普通导航开成浏览器网页版，托盘一度只出网页版。验证：stub 掉 `Start-Process`/窗口枚举的新旧对比——旧实现关窗场景 2 次启动（bug）；新实现关窗场景 1 次、两轮都无窗口场景 2 次（默认+降级）、此后才回退浏览器；生成物 PARSE-OK，模板仍 UTF-8 无 BOM 纯 CRLF。**待推送 GitHub**（未 bump `_meta.json`） |
 | dsh-launcher（一键启动本体） | 1.1.94 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **启动器环境清理扩展**（2026-10-14）：WorkBuddy/CodeBuddy 经 NODE_OPTIONS 注入 node「安全删除」护栏（实为回收站转移 + 每轮 50 次删除额度），DSH 贴图落盘路径必须 unlink 暂存文件，额度用满后删除被拒、裸异常被 commands.ts 兜底成 session/agent-busy，表现为「贴图发不出去」；模板 mode-source.json / mode-path.json 的 __MODE_START_DSH_SERVER__ 新增 Remove-InjectedDeleteGuard + Start-DshProcess（置空 NODE_OPTIONS、置 CODEBUDDY_SAFE_DELETE_ENABLED=0，生效后还原宿主环境）；本机 D:\DSHS 启动器已按同一方式手工打补丁；验证：同一 unlink 在原环境报 SAFE_DELETE_BULK_CONFIRM_REQUIRED、清洁后 ok，子进程 safeDeleteShimLoaded=false；备份 .bak-deleteguard-20261014-180312；**待推送 GitHub**（本次未执行上传） |
+| dsh-launcher（一键启动本体） | 1.1.93 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **配套技能 skill-craft-charter 升至 1.7.0**（references 按【构建期】/【维护期】重划去噪：新增 `references/自维护留痕.md` 收原 `方法论.md` §六 全块，`方法论.md` 21,722→9,841 B；台账只留机器数据、两条规范（留痕存放/标注、专章计量口径）上移构建期文件；`SKILL.md` §7 加「读法分工」；§0 仍四条铁律、§6 仍 16 项）。主包按官方 `Is-SyncIgnored` 规则重建（71 条目），本轮发布到 `releases\v1.1.93\`（不再原地重写旧版本目录）。 |
 | dsh-launcher（一键启动本体） | 1.1.92 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **规则 0 payload 同步为现行形态**（2026-09-22，AGENTS.md 合并收口）：① `setup.ps1` 内嵌 `$ruleBlock` 由「旧标题 + 全项加粗 + 无末句括注」同步为**现行规则 0**（`## 1 规则 0（最高优先强制项）…`，末句含「（平台系统约束除外，见第 5 节）」），`$ruleMarker` 同步更新——新机写入的 AGENTS.md 与主文件规则 0 段逐字一致（块内容口径：不含 here-string 结构性首尾空行）；② `SKILL.md` 的「本机两处同源…以本技能为准」改为止于事实的「已同步…权威仍以 AGENTS.md 为准」，并注明新建机器上「见第 5 节」暂无指向；③ 行为三态实测（新建写入／已同步跳过／缺规则 0 追加）＋ PS 5.1 语法检查通过。本轮发布到 `releases\v1.1.92\`。 |
 | dsh-launcher（一键启动本体） | 1.1.91 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **修复内嵌配套包长期发旧件**（2026-09-19，审查 S1/S2）：① `dsh-sync.ps1` 的内嵌刷新由「本机版本 ≠ 内嵌版本」门控改为**对全部配套无条件重建**——原先「只改内容、未 bump 版本」的配套（pdf-parse-v3 去本机路径、adversarial-review 内容增长）内嵌包永不刷新，成品包长期发旧件，且旧件与新件 `_meta` 版本相同时引擎连分叉都检测不到；② 新增发布后一致性守卫（内嵌包 vs releases 包的条目名+大小，不一致即 warning）；③ 配套版本：pdf-parse-v3 **1.2.4**（去本机绝对路径 20 处）、adversarial-review `_meta` **0.1.0→0.1.2**（与其 SKILL.md frontmatter 对齐，消除自相矛盾）。本轮发布到 `releases\v1.1.91\`。 |
 | dsh-launcher（一键启动本体） | 1.1.90 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **运行期留痕不再随包分发 + 发布物去本机路径**（2026-09-19）：① `dsh-sync.ps1` 的 `Is-SyncIgnored` 与 `Test-SyncPurgePath` 新增 `var/` 规则——各技能 `var/`（审查快照/台账/任务脚本）属每台机器各自的运行期产物，不进包/不进源树，并从仓库源树清除历史遗留；技能脚本按三级回落自建目录，新机器缺 `var/` 不影响可用（备案：`var/registry/guide-clauses.json` 沉淀条款也因此不再跨机传播）。② 清理 `pdf-parse-v3` 发布物内的本机绝对路径（`C:\Users\<用户名>` 等 20 处，均在文档/prompt 中）。③ 本轮起发布到新版本目录 `releases\v1.1.90\`（不再原地重写旧版本目录）。 |

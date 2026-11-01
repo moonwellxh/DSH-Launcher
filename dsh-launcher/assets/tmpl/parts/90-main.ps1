@@ -1,34 +1,165 @@
-﻿# ---------- 启动/附着服务 ----------
+﻿# ---------- 自动提权（2026-10-31；2026-11-01 两轮对抗审查后重写交接判据）----------
+# 所有入口（桌面快捷方式 / 启动DSH-托盘.vbs / .cmd / 启动DSH.bat / 直接 -File）都走同一逻辑：
+# 非管理员 → 改投「最高权限」计划任务，让 dsh web 继承管理员令牌。
+# 交接判据（第二轮审查修）：不再用「有托盘进程出现」当成功——那会在托盘还没建好图标时误判，
+# 也会让两个等待者互相冒充托盘。改为：
+#   等待者写自己的标记 .dsh-handoff.<pid>.lock；
+#   任务托盘启动时清掉所有标记，并在「图标真的可见之后」写 dsh-tray.ready；
+#   等待者只有在「自己的标记消失」且「就绪信号晚于本次等待开始」时才 exit 0。
+if (-not $CheckOnly) {
+    $trayIsAdmin = $false
+    try {
+        $trayWi = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $trayWp = New-Object -TypeName Security.Principal.WindowsPrincipal -ArgumentList $trayWi
+        $trayIsAdmin = $trayWp.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch { $trayIsAdmin = $false }
+    $trayFromTask = ($env:DSH_TRAY_FROM_TASK -eq '1')
+    $handoffDir = if ($PSScriptRoot) { $PSScriptRoot } else { '' }
+    $myMarker = if ($handoffDir) { Join-Path $handoffDir ('.dsh-handoff.' + $PID + '.lock') } else { '' }
+    $readyFile = if ($handoffDir) { Join-Path $handoffDir 'dsh-tray.ready' } else { '' }
+    # 只有「被任务拉起且确实提权」的托盘才有资格签收与写就绪信号（复审严重项：否则降级会被伪装成成功）
+    $handoffSigner = ($trayFromTask -and $trayIsAdmin)
+    if ($handoffSigner) {
+        # 清理推迟到抢到互斥锁之后：任务托盘若抢锁失败退出，等待者不会白等满 20 秒
+        $script:handoffCleanupPending = $true
+    }
+    if ($trayFromTask -and -not $trayIsAdmin) {
+        try { [void](Write-DshTrayLog -Level 'WARN' -Event 'elevation.task_not_elevated' -Fields @{ note = 'task-started tray is not elevated; running in current context to avoid a spin' }) } catch {}
+    }
+    if ((-not $trayIsAdmin) -and (-not $trayFromTask)) {
+        $elevTaskName = 'DSH-Tray-Elevated'
+        $elevTaskFound = $false
+        try { $elevTaskFound = ($null -ne (Get-ScheduledTask -TaskName $elevTaskName -ErrorAction Stop)) } catch { $elevTaskFound = $false }
+        if ($elevTaskFound) {
+            $waiterStart = Get-Date
+            if ($myMarker) {
+                try { [IO.File]::WriteAllText($myMarker, ('pid=' + $PID), (New-Object System.Text.UTF8Encoding($false))) }
+                catch {
+                    try { [void](Write-DshTrayLog -Level 'WARN' -Event 'elevation.marker_write_failed' -Fields @{ path = [string]$myMarker; error = $_.Exception.Message }) } catch {}
+                }
+            }
+            $runCode = -1
+            try {
+                # schtasks 也加超时：任务调度异常时不能把等待者永远卡在创建图标之前
+                $sp = Start-Process -FilePath 'schtasks.exe' -ArgumentList @('/Run','/TN',$elevTaskName) -WindowStyle Hidden -PassThru -ErrorAction Stop
+                try { $null = Wait-Process -Id $sp.Id -Timeout 20 -ErrorAction SilentlyContinue } catch {}
+                $sp.Refresh()
+                if (-not $sp.HasExited) {
+                    # 超时或 Wait-Process 抛错：一律回收，别留残留进程
+                    try { Stop-Process -Id $sp.Id -Force -ErrorAction SilentlyContinue } catch {}
+                } elseif ($null -ne $sp.ExitCode) { $runCode = [int]$sp.ExitCode }
+            } catch { $runCode = -1 }
+            if ($runCode -eq 0) {
+                $appeared = $false
+                for ($k = 0; $k -lt 80; $k++) {
+                    Start-Sleep -Milliseconds 250
+                    if ($myMarker -and (Test-Path -LiteralPath $myMarker)) { continue }
+                    if ($readyFile -and (Test-Path -LiteralPath $readyFile)) {
+                        $fresh = $false
+                        $alive = $false
+                        try {
+                            $fresh = ((Get-Item -LiteralPath $readyFile).LastWriteTime -ge $waiterStart.AddSeconds(-2))
+                            $rtxt = [IO.File]::ReadAllText($readyFile)
+                            $rm = [regex]::Match($rtxt, 'pid=(\d+)')
+                            if ($rm.Success) { $alive = ($null -ne (Get-Process -Id ([int]$rm.Groups[1].Value) -ErrorAction SilentlyContinue)) }
+                        } catch { $fresh = $false }
+                        if ($fresh -and $alive) { $appeared = $true; break }
+                    }
+                }
+                if ($appeared) {
+                    if ($OpenBrowser) {
+                        for ($i2 = 0; $i2 -lt 40; $i2++) {
+                            if ((Get-DshListenerPid) -ne 0) { break }
+                            Start-Sleep -Milliseconds 250
+                        }
+                        try { Open-Url $webUrl } catch {}
+                    }
+                    exit 0
+                }
+                if ($myMarker) { try { Remove-Item -LiteralPath $myMarker -Force -ErrorAction SilentlyContinue } catch {} }
+                try { [void](Write-DshTrayLog -Level 'WARN' -Event 'elevation.handoff_no_tray' -Fields @{ note = 'scheduled task ran but no ready signal appeared; continuing in current context' }) } catch {}
+            } else {
+                if ($myMarker) { try { Remove-Item -LiteralPath $myMarker -Force -ErrorAction SilentlyContinue } catch {} }
+                try { [void](Write-DshTrayLog -Level 'WARN' -Event 'elevation.handoff_failed' -Fields @{ exit = [string]$runCode }) } catch {}
+            }
+        }
+    }
+}
+# ---------- 探测（CheckOnly 不抢锁、不起服务）----------
 $listener = Get-DshListenerPid
 if ($CheckOnly) {
-    # CheckOnly：只探测，不启动服务、不产生孤儿进程
     if ($listener -ne 0) { Write-Output "DSH Web 已在运行（PID $listener）" }
     else { Write-Output 'DSH Web 未运行（CheckOnly 不启动服务）' }
     Write-Output 'CheckOnly 模式结束'
     exit 0
 }
-$proc = $null
-$script:startFailed = $false
-if ($listener -eq 0) {
-    $proc = Start-DshServer
-    if ($proc) { Write-Output "已启动 DSH Web（PID $($proc.Id)）" }
-    else { Write-Output '__MODE_START_FAILED_MSG__'; $script:startFailed = $true }
-} else {
-    Write-Output "DSH Web 已在运行（PID $listener）"
-}
 
+# ---------- 单实例锁（2026-11-01 审查后重排：先抢锁，再动服务）----------
+# 旧顺序是「先起服务、后抢锁」：两个实例同时冷启动时都判 listener=0，都往同一份
+# dsh-web.log 重定向，后到者 Start-Process 抛共享冲突、在创建通知图标之前静默死掉。
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $mutex = New-Object System.Threading.Mutex($false, 'Local\DSH-Tray-3080')
-if (-not $mutex.WaitOne(0, $false)) {
-    # 残留托盘（旧代码/图标丢失的僵尸）占着互斥锁：结束它们后接管，保证双击必定出新托盘
+# AbandonedMutexException 的语义是「前一个持有者死了，锁已归你」，必须当成功处理——
+# 2026-11-01 第二轮审查阻断项：上一版写成 $owned=$false，导致「已有托盘时再双击」杀掉旧托盘后自己退出。
+$gotLock = $false
+try { $gotLock = $mutex.WaitOne(0, $false) }
+catch [System.Threading.AbandonedMutexException] { $gotLock = $true }
+catch { $gotLock = $false }
+if (-not $gotLock) {
+    # 残留托盘（僵尸图标）占着互斥锁：结束它们后接管
     Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match '-File\s+.*DSH-tray\.ps1' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 800
     $mutex = New-Object System.Threading.Mutex($false, 'Local\DSH-Tray-3080')
     $owned = $false
-    try { $owned = $mutex.WaitOne(0, $false) } catch { $owned = $true }
-    if (-not $owned) { if ($OpenBrowser) { try { Open-Url $webUrl } catch {} }; exit 0 }
+    try { $owned = $mutex.WaitOne(0, $false) }
+    catch [System.Threading.AbandonedMutexException] { $owned = $true }
+    catch { $owned = $false }
+    if (-not $owned) {
+        # 非管理员杀不动提权托盘时走到这里：留痕，别无声退出
+        try { [void](Write-DshTrayLog -Level 'WARN' -Event 'tray.mutex_busy' -Fields @{ note = 'another tray holds the mutex and could not be taken over' }) } catch {}
+        if ($OpenBrowser) { try { Open-Url $webUrl } catch {} }
+        exit 0
+    }
+}
+# 锁已到手（直接成功 / Abandoned 成功 / 杀旧接管三条路径都到这里）。
+if ($script:handoffCleanupPending) {
+    try {
+        if ($handoffDir) {
+            Get-ChildItem -LiteralPath $handoffDir -Filter '.dsh-handoff.*.lock' -Force -ErrorAction SilentlyContinue |
+                Remove-Item -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
+    try { if ($readyFile) { Remove-Item -LiteralPath $readyFile -Force -ErrorAction SilentlyContinue } } catch {}
+}
+# 统一重探端口，抢锁前那次探测的值可能已经过期（第二轮复审意见②）。
+$listener = Get-DshListenerPid
+
+# ---------- 启动/附着服务 ----------
+$proc = $null
+$script:startFailed = $false
+$script:startThrew = $false
+$script:portBusyByOther = $false
+if ($listener -eq 0) {
+    try { $proc = Start-DshServer }
+    catch {
+        $script:startThrew = $true
+        try { [void](Write-DshTrayLog -Level 'ERROR' -Event 'server.start_throw' -Fields @{ error = $_.Exception.Message }) } catch {}
+        $proc = $null
+    }
+    if ($proc) { Write-Output "已启动 DSH Web（PID $($proc.Id)）" }
+    else { Write-Output '__MODE_START_FAILED_MSG__'; $script:startFailed = $true }
+} else {
+    # 2026-11-01：附着前校验属主——端口被别的程序占用时绝不当作「DSH 已在运行」
+    $ident = Test-DshListenerIdentity $listener
+    if ($ident.Ok) {
+        Write-Output "DSH Web 已在运行（PID $listener）"
+    } else {
+        $script:portBusyByOther = $true
+        try { [void](Write-DshTrayLog -Level 'WARN' -Event 'server.port_foreign' -Fields @{ pid = [string]$listener; name = [string]$ident.Name }) } catch {}
+        Write-Output ("端口 $port 被 PID $listener（" + $ident.Name + "）占用，判定不是 DSH，未启动服务")
+    }
 }
 
 $notify = New-Object System.Windows.Forms.NotifyIcon
@@ -38,7 +169,44 @@ if (-not (Test-Path -LiteralPath $icoPath)) { $icoPath = Join-Path $PSScriptRoot
 if (-not (Test-Path -LiteralPath $icoPath)) { $icoPath = Join-Path $PSScriptRoot 'tray.ico' }
 if (Test-Path -LiteralPath $icoPath) { $notify.Icon = New-Object System.Drawing.Icon($icoPath) } else { $notify.Icon = [System.Drawing.SystemIcons]::Application }
 $notify.Visible = $true
+# 就绪信号：只在「被任务拉起且已提权」时写（否则等于把非提权降级伪装成交接成功）。
+if ($PSScriptRoot -and $trayFromTask -and $trayIsAdmin) {
+    try { [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'dsh-tray.ready'), ('pid=' + $PID + ';at=' + (Get-Date).ToString('o')), (New-Object System.Text.UTF8Encoding($false))) } catch {}
+    # 写完后清一次迟到等待者的标记，避免它们空等满 20 秒
+    try {
+        Get-ChildItem -LiteralPath $PSScriptRoot -Filter '.dsh-handoff.*.lock' -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    } catch {}
+}
 __MODE_START_FAILED_BLOCK__
+if ($script:portBusyByOther) {
+    Show-DshNotice(9000, 'DSH', "端口 $port 被别的程序占用（PID $listener），DSH 没能启动。请关掉占用该端口的程序，或用桌面「DSH 紧急恢复」查看详情。", 'Error')
+} elseif ($script:startFailed -and $script:startThrew) {
+    # 抛异常≠找不到 Node：真实原因在 dsh-tray.log 的 server.start_throw
+    Show-DshNotice(9000, 'DSH', '启动出错（非缺 Node）：见 dsh-tray.log，或用「DSH 紧急恢复」', 'Error')
+}
+# 硬重启结果回执（2026-10-26 审查 S2/S3）：上一次「硬重启托盘」里安装脚本的结果；
+# 成功（setup=done 且无 notes）则静默，失败/超时/找不到脚本时用气泡如实告知
+try {
+    $stPath = Join-Path $PSScriptRoot 'dsh-restart-status.txt'
+    if (Test-Path -LiteralPath $stPath) {
+        $st = @{}
+        foreach ($ln in @(Get-Content -LiteralPath $stPath -Encoding UTF8)) {
+            $eq = ([string]$ln).IndexOf('=')
+            if ($eq -gt 0) { $st[([string]$ln).Substring(0, $eq)] = ([string]$ln).Substring($eq + 1) }
+        }
+        Remove-Item -LiteralPath $stPath -Force -ErrorAction SilentlyContinue
+        $stState = [string]$st['setup']
+        $stNotes = [string]$st['notes']
+        if (($stState -and $stState -ne 'done') -or $stNotes) {
+            $stMsg = '安装脚本=' + $(if ($stState) { $stState } else { '未知' })
+            $stCode = [string]$st['setupExit']
+            if ($stCode -and $stCode -ne '0') { $stMsg += "（退出码 $stCode）" }
+            if ($stNotes) { $stMsg += "；$stNotes" }
+            Show-DshNotice(9000, 'DSH 硬重启结果', $stMsg, 'Warning')
+        }
+    }
+} catch {}
 # 外壳（Explorer）看护：Explorer 崩溃重启会丢失托盘图标注册，检测到后自动重新注册
 $script:shellPid = 0
 $script:shellStart = [datetime]::MinValue
@@ -93,7 +261,7 @@ function Start-TrayAutoRepair {
     $setupPs = '__SETUP_PS1__'
     if (-not (Test-Path -LiteralPath $setupPs)) {
         # 找不到 setup.ps1（技能被移动/改名/删除）：不白烧修复额度，直接提示人工
-        $notify.ShowBalloonTip(6000, 'DSH', 'DSH Web 反复启动失败，且找不到自动修复用的安装脚本（setup.ps1）。请确认技能未移动，或重新安装 dsh-launcher 后用托盘「硬重启托盘」。', 'Warning')
+        Show-DshNotice(6000, 'DSH', 'DSH Web 反复启动失败，且找不到自动修复用的安装脚本（setup.ps1）。请确认技能未移动，或重新安装 dsh-launcher 后用托盘「硬重启托盘」。', 'Warning')
         return
     }
     $trayPid     = $PID
@@ -148,33 +316,43 @@ $webTimer.Add_Tick({
                         # S2(建议): setup 存在性先于写标记——缺失则提示人工 + return，不白烧 30 分钟熔断额度
                         if (-not (Test-Path -LiteralPath '__SETUP_PS1__')) {
                             $script:webWatchdogDisabled = $true
-                            $notify.ShowBalloonTip(6000, 'DSH', 'DSH Web 反复启动失败，且找不到自动修复用的安装脚本（setup.ps1）。请确认技能未移动，或重新安装 dsh-launcher 后用托盘「硬重启托盘」。', 'Warning')
+                            Show-DshNotice(6000, 'DSH', 'DSH Web 反复启动失败，且找不到自动修复用的安装脚本（setup.ps1）。请确认技能未移动，或重新安装 dsh-launcher 后用托盘「硬重启托盘」。', 'Warning')
                             return
                         }
                         # M3: 先确认熔断标记写入成功才自愈（fail-closed：TEMP 都写不了 → 不自愈循环）
                         if (-not (Set-AutoRepairMark)) {
                             $script:webWatchdogDisabled = $true
-                            $notify.ShowBalloonTip(6000, 'DSH', 'DSH Web 反复启动失败，且无法写入自愈标记（TEMP 不可写）。已停止自动重启。请升级 DSH，或用托盘「硬重启托盘」手动启动。', 'Warning')
+                            Show-DshNotice(6000, 'DSH', 'DSH Web 反复启动失败，且无法写入自愈标记（TEMP 不可写）。已停止自动重启。请升级 DSH，或用托盘「硬重启托盘」手动启动。', 'Warning')
                             return
                         }
-                        $notify.ShowBalloonTip(4000, 'DSH', 'DSH Web 反复启动失败，正在自动重跑安装脚本（重新探测 Node/DSH）并重启托盘…', 'Info')
-                        if ($null -eq (Start-TrayAutoRepair)) { return }
+                        Show-DshNotice(4000, 'DSH', 'DSH Web 反复启动失败，正在自动重跑安装脚本（重新探测 Node/DSH）并重启托盘…', 'Info')
+                        $repaired = Start-TrayAutoRepair
+                        # $null = 找不到 setup.ps1（函数内已弹过正确提示）；$false = 自愈进程拉不起来。两者不能混为一谈。
+                        if ($null -eq $repaired) { return }
+                        if (-not $repaired) {
+                            $script:webWatchdogDisabled = $true
+                            Show-DshNotice(6000, 'DSH', '自动修复没能拉起托盘（TEMP 不可写或无法启动进程）。已停止自动重启，请用桌面「DSH 紧急恢复」或手动启动托盘。', 'Warning')
+                        }
                         return
                     }
                     $script:webWatchdogDisabled = $true
-                    $notify.ShowBalloonTip(6000, 'DSH', 'DSH Web 反复启动失败（自动修复后仍未恢复，可能 DSH 版本过旧或 Node.js 未安装）。已停止自动重启。请升级 DSH，或用托盘「硬重启托盘」重新探测后手动启动。', 'Warning')
+                    Show-DshNotice(6000, 'DSH', 'DSH Web 反复启动失败（自动修复后仍未恢复，可能 DSH 版本过旧或 Node.js 未安装）。已停止自动重启。请升级 DSH，或用托盘「硬重启托盘」重新探测后手动启动。', 'Warning')
                     return
                 }
-                $notify.ShowBalloonTip(3000, 'DSH', 'DSH Web 已停止，正在自动重启…', 'Info')
+                Show-DshNotice(3000, 'DSH', 'DSH Web 已停止，正在自动重启…', 'Info')
                 # 防挂死进程累积：重启前清理上一 proc（已自然退出则跳过）
                 if ($null -ne $script:proc) {
                     try { $script:proc.Refresh() } catch {}
                     if (-not $script:proc.HasExited) { Stop-Process -Id $script:proc.Id -Force -ErrorAction SilentlyContinue }
                     $script:proc = $null
                 }
-                $script:proc = Start-DshServer
+                try { $script:proc = Start-DshServer }
+                catch {
+                    try { [void](Write-DshTrayLog -Level 'ERROR' -Event 'server.start_throw_watchdog' -Fields @{ error = $_.Exception.Message }) } catch {}
+                    $script:proc = $null
+                }
                 if ($null -eq $script:proc) {
-                    $notify.ShowBalloonTip(4000, 'DSH', '__MODE_WEB_WATCHDOG_FAIL__', 'Error')
+                    Show-DshNotice(4000, 'DSH', '__MODE_WEB_WATCHDOG_FAIL__', 'Error')
                 } else {
                     # 看护重启成功：重置自动开浏览器标记；就绪 Timer 若已停止（如旧逻辑在进程退出时 Stop）则重新启动
                     $script:browserOpened = $false
@@ -183,14 +361,14 @@ $webTimer.Add_Tick({
             }
         } else {
             if ($script:webDownCount -ge 3) {
-                $notify.ShowBalloonTip(2000, 'DSH', "DSH Web 已恢复（PID $listener）。", 'Info')
+                Show-DshNotice(2000, 'DSH', "DSH Web 已恢复（PID $listener）。", 'Info')
             }
             $script:webDownCount = 0
             $script:webRestartCount = 0
             # 服务恢复 → 重新武装看护（之前连续失败被禁用时，用户手动/升级救活后应能继续自动守护）
             if ($script:webWatchdogDisabled) {
                 $script:webWatchdogDisabled = $false
-                $notify.ShowBalloonTip(2000, 'DSH', 'DSH Web 已恢复，看护已重新武装。', 'Info')
+                Show-DshNotice(2000, 'DSH', 'DSH Web 已恢复，看护已重新武装。', 'Info')
             }
         }
     } catch {}
@@ -243,13 +421,13 @@ function Update-CodeBuddyGatewayMenu {
 function Start-CodeBuddyGateway([string]$Helper) {
     $helperPath = Join-Path $script:codeBuddyGatewayDir $Helper
     if (-not (Test-Path -LiteralPath $helperPath)) {
-        try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "找不到启动脚本：$helperPath", 'Error') } catch {}
+        try { Show-DshNotice(4000, 'CodeBuddy 网关', "找不到启动脚本：$helperPath", 'Error') } catch {}
         return
     }
     try {
         Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $helperPath) -WindowStyle Hidden
     } catch {
-        try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "启动失败：$($_.Exception.Message)", 'Error') } catch {}
+        try { Show-DshNotice(4000, 'CodeBuddy 网关', "启动失败：$($_.Exception.Message)", 'Error') } catch {}
     }
 }
 
@@ -271,14 +449,14 @@ function Restart-CodeBuddyGateway([int]$Port, [string]$Label, [string]$Helper) {
         Start-Sleep -Milliseconds 200
     }
     if ((Get-CodeBuddyListenerPid $Port) -gt 0) {
-        try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "$Label 网关端口 $Port 仍被占用，未启动。", 'Error') } catch {}
+        try { Show-DshNotice(4000, 'CodeBuddy 网关', "$Label 网关端口 $Port 仍被占用，未启动。", 'Error') } catch {}
         Update-CodeBuddyGatewayMenu
         return
     }
     Start-CodeBuddyGateway $Helper
     Start-Sleep -Milliseconds 700
     Update-CodeBuddyGatewayMenu
-    try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "$Label 网关正在重启（端口 $Port）。", 'Info') } catch {}
+    try { Show-DshNotice(4000, 'CodeBuddy 网关', "$Label 网关正在重启（端口 $Port）。", 'Info') } catch {}
 }
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -400,7 +578,7 @@ $miBranch.Add_Click({
         $f.Dispose()
         if (-not $script:branchChoice) { return }
         $newBranch = $script:branchChoice
-        if ($newBranch -eq $ghBranch) { $notify.ShowBalloonTip(2000, 'DSH', "同步分支已是 $ghBranch", 'Info'); return }
+        if ($newBranch -eq $ghBranch) { Show-DshNotice(2000, 'DSH', "同步分支已是 $ghBranch", 'Info'); return }
         $cfgPath = Join-Path $env:USERPROFILE '.dsh\gh-sync\config.json'
         $existing = @{}
         if (Test-Path -LiteralPath $cfgPath) {
@@ -411,7 +589,7 @@ $miBranch.Add_Click({
         elseif ($ghToken) { $newCfg.token = [string]$ghToken }
         New-Item -ItemType Directory -Force -Path (Split-Path $cfgPath) | Out-Null
         [System.IO.File]::WriteAllText($cfgPath, ($newCfg | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
-        $notify.ShowBalloonTip(2000, 'DSH', "同步分支已切换到 $newBranch，重启托盘生效…", 'Info')
+        Show-DshNotice(2000, 'DSH', "同步分支已切换到 $newBranch，重启托盘生效…", 'Info')
         $trayPid = $PID
         $trayScript = $PSCommandPath
         $helperPath = Join-Path $env:TEMP ("dsh-branch-" + [guid]::NewGuid().ToString('N') + '.ps1')
@@ -431,7 +609,7 @@ Remove-Item -LiteralPath '$helperEsc' -Force -ErrorAction SilentlyContinue
         Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',('"' + $helperPath + '"') -WindowStyle Hidden
         $notify.Visible = $false; $notify.Dispose()
         [System.Windows.Forms.Application]::Exit()
-    } catch { $notify.ShowBalloonTip(3000, 'DSH', "切换分支失败：$($_.Exception.Message)", 'Error') }
+    } catch { Show-DshNotice(3000, 'DSH', "切换分支失败：$($_.Exception.Message)", 'Error') }
 })
 $menu.Items.Add('-') | Out-Null
 $script:miCbIntl = $menu.Items.Add('CodeBuddy 国际 4376：检测中…')
@@ -440,14 +618,14 @@ $script:miCbIntl.Add_Click({
     $r = [System.Windows.Forms.MessageBox]::Show("将重启 CodeBuddy 国际网关（端口 4376）。`nWeb UI 会短暂断开；国际网关启动时会等待 Clash 约 15 秒。`n`n确认继续？", 'CodeBuddy 网关', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
     if ($r -eq [System.Windows.Forms.DialogResult]::Yes) {
         try { Restart-CodeBuddyGateway -Port 4376 -Label '国际' -Helper 'start-intl.cmd' }
-        catch { try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "重启失败：$($_.Exception.Message)", 'Error') } catch {} }
+        catch { try { Show-DshNotice(4000, 'CodeBuddy 网关', "重启失败：$($_.Exception.Message)", 'Error') } catch {} }
     }
 })
 $script:miCbCn.Add_Click({
     $r = [System.Windows.Forms.MessageBox]::Show("将重启 CodeBuddy 国内网关（端口 54962）。`nWeb UI 会短暂断开。`n`n确认继续？", 'CodeBuddy 网关', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
     if ($r -eq [System.Windows.Forms.DialogResult]::Yes) {
         try { Restart-CodeBuddyGateway -Port 54962 -Label '国内' -Helper 'start-cn.cmd' }
-        catch { try { $notify.ShowBalloonTip(4000, 'CodeBuddy 网关', "重启失败：$($_.Exception.Message)", 'Error') } catch {} }
+        catch { try { Show-DshNotice(4000, 'CodeBuddy 网关', "重启失败：$($_.Exception.Message)", 'Error') } catch {} }
     }
 })
 $menu.Add_Opening({ Update-CodeBuddyGatewayMenu })
@@ -459,16 +637,21 @@ $miDocs  = $menu.Items.Add('DS 开放平台')
 $menu.Items.Add('-') | Out-Null
 $miRestart = $menu.Items.Add('硬重启托盘')
 $miExit  = $menu.Items.Add('退出并停止 DSH')
-$miCur.Add_Click({ try { Open-Url 'https://deepseekdocs.com/' } catch { $notify.ShowBalloonTip(3000, 'DSH', "打开文档失败：$($_.Exception.Message)", 'Error') } })
-$miOpen.Add_Click({ try { Open-Url $webUrl } catch { $notify.ShowBalloonTip(3000, 'DSH', "打开 Web UI 失败：$($_.Exception.Message)", 'Error') } })
-$miDocs.Add_Click({ try { Open-Url 'https://platform.deepseek.com/' } catch { $notify.ShowBalloonTip(3000, 'DSH', "打开开放平台失败：$($_.Exception.Message)", 'Error') } })
+$miCur.Add_Click({ try { Open-Url 'https://deepseekdocs.com/' } catch { Show-DshNotice(3000, 'DSH', "打开文档失败：$($_.Exception.Message)", 'Error') } })
+$miOpen.Add_Click({ try { Open-Url $webUrl } catch { Show-DshNotice(3000, 'DSH', "打开 Web UI 失败：$($_.Exception.Message)", 'Error') } })
+$miDocs.Add_Click({ try { Open-Url 'https://platform.deepseek.com/' } catch { Show-DshNotice(3000, 'DSH', "打开开放平台失败：$($_.Exception.Message)", 'Error') } })
 
-$miTui.Add_Click({ try { if (Test-Path -LiteralPath $launchBat) { Start-Process -FilePath $launchBat -ArgumentList '2' } else { Open-Url $webUrl } } catch { $notify.ShowBalloonTip(3000, 'DSH', "打开 TUI 失败：$($_.Exception.Message)", 'Error') } })
-$miHead.Add_Click({ try { if (Test-Path -LiteralPath $launchBat) { Start-Process -FilePath $launchBat -ArgumentList '3' } else { Open-Url $webUrl } } catch { $notify.ShowBalloonTip(3000, 'DSH', "打开无界面模式失败：$($_.Exception.Message)", 'Error') } })
+$miTui.Add_Click({ try { if (Test-Path -LiteralPath $launchBat) { Start-Process -FilePath $launchBat -ArgumentList '2' } else { Open-Url $webUrl } } catch { Show-DshNotice(3000, 'DSH', "打开 TUI 失败：$($_.Exception.Message)", 'Error') } })
+$miHead.Add_Click({ try { if (Test-Path -LiteralPath $launchBat) { Start-Process -FilePath $launchBat -ArgumentList '3' } else { Open-Url $webUrl } } catch { Show-DshNotice(3000, 'DSH', "打开无界面模式失败：$($_.Exception.Message)", 'Error') } })
 __MODE_RESTART_BODY__
 $miExit.Add_Click({
     $toKill = Get-DshListenerPid
-    if ($toKill -gt 0) { & taskkill /PID $toKill /T /F 2>$null | Out-Null }
+    if ($toKill -gt 0) {
+        # 2026-11-01 审查：先验属主，端口被别的程序占用时绝不 taskkill
+        $ident = Test-DshListenerIdentity $toKill
+        if ($ident.Ok) { & taskkill /PID $toKill /T /F 2>$null | Out-Null }
+        else { Show-DshNotice(6000, 'DSH', "端口 $port 被别的程序占用（PID $toKill），不是 DSH，没有结束它。", 'Warning') }
+    }
     $notify.Visible = $false; $notify.Dispose()
     [System.Windows.Forms.Application]::Exit()
 })
@@ -550,7 +733,7 @@ $miLatest.Add_Click({
     try {
         $instruction = Build-UpgradeInstruction (Get-CurrentDshVersion) $script:latestVersion
         Show-UpgradeDialog 'DSH 升级' $instruction
-    } catch { $notify.ShowBalloonTip(3000, 'DSH 升级', "准备失败：$($_.Exception.Message)", 'Error') }
+    } catch { Show-DshNotice(3000, 'DSH 升级', "准备失败：$($_.Exception.Message)", 'Error') }
 })
 # 第三行 5 连击 → 打开 token 配置；第四行：Git 模式（确认后双向同步）/ 待更新（更新本地）/ 无需更新（刷新 ≥1s）
 $script:launchClicks = New-Object System.Collections.ArrayList
@@ -563,10 +746,10 @@ $miLauncher.Add_Click({
             $script:launchClicks.Clear()
             $cfgScript = Join-Path $PSScriptRoot 'configure-git-credentials.vbs'
             if (Test-Path -LiteralPath $cfgScript) {
-                $notify.ShowBalloonTip(2000, 'DSH', '打开 GitHub token 配置…', 'Info')
+                Show-DshNotice(2000, 'DSH', '打开 GitHub token 配置…', 'Info')
                 Start-Process wscript.exe -ArgumentList ('"' + $cfgScript + '"')
             } else {
-                $notify.ShowBalloonTip(3000, 'DSH', "未找到 token 配置脚本：$cfgScript", 'Error')
+                Show-DshNotice(3000, 'DSH', "未找到 token 配置脚本：$cfgScript", 'Error')
             }
         }
     } catch {}
@@ -581,7 +764,7 @@ $miGit.Add_Click({
             }
         } elseif ($script:pendingUpdate) {
             # 待更新：不再自动更新——转交同步引擎弹窗给建议，方向由用户选择
-            $notify.ShowBalloonTip(2000, 'DSH', '正在从 GitHub 更新启动器…', 'Info')
+            Show-DshNotice(2000, 'DSH', '正在从 GitHub 更新启动器…', 'Info')
             $syncScript = Join-Path $PSScriptRoot 'dsh-sync.ps1'
             if (Test-Path -LiteralPath $syncScript) {
                 Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',('"' + $syncScript + '"'),'-Mode','__MODE_SYNC_MODE__','-InstallDir',('"' + $PSScriptRoot + '"'),'-Direction','auto' -WindowStyle Hidden
@@ -611,7 +794,10 @@ $miGit.Add_Click({
 $notify.Add_DoubleClick({ param($s, $e) try { Open-Url $webUrl } catch { Start-Process (Get-DshOpenUrl) } })
 
 # 启动状态气泡（透明度）
-$notify.ShowBalloonTip(3000, 'DSH', $(if ($listener -eq 0) { if ($null -eq $proc) { '正在启动 DSH Web...' } else { "正在启动 DSH Web（PID $($proc.Id)）..." } } else { "DSH Web 已在运行（PID $listener）" }), 'Info')
+# 外来端口/启动失败时已有专门的错误卡片，这里不再叠一张
+if (-not $script:portBusyByOther -and -not $script:startFailed) {
+    Show-DshNotice(3000, 'DSH', $(if ($listener -eq 0) { if ($null -eq $proc) { '正在启动 DSH Web...' } else { "正在启动 DSH Web（PID $($proc.Id)）..." } } else { "DSH Web 已在运行（PID $listener）" }), 'Info')
+}
 
 # 非阻塞就绪检查（Timer，不卡消息循环）
 if ($OpenBrowser) {
@@ -632,7 +818,7 @@ $readyTimer = New-Object System.Windows.Forms.Timer
                 # 服务已就绪但读不到启动令牌：不再静默降级（审查 S2），一次性告知用户怎么自救
                 if (-not $script:noTokenHintShown) {
                     $script:noTokenHintShown = $true
-                    try { $notify.ShowBalloonTip(8000, 'DSH', "未能从 dsh-web.log 读到启动令牌：将用普通地址打开页面。若出现 401，请复制该日志里带 token 的地址在浏览器打开一次（此后 30 天内免登录）。", 'Warning') } catch {}
+                    try { Show-DshNotice(8000, 'DSH', "未能从 dsh-web.log 读到启动令牌：将用普通地址打开页面。若出现 401，请复制该日志里带 token 的地址在浏览器打开一次（此后 30 天内免登录）。", 'Warning') } catch {}
                 }
                 # 令牌读不到时无法用认证探测判定；直接判就绪并打开（提示已在上面给出），不再空等 30 秒
                 $ok = $true
@@ -642,9 +828,9 @@ $readyTimer = New-Object System.Windows.Forms.Timer
             if (-not $ok -and $script:readyTicks -ge 30) {
                 # 30 秒仍拿不到认证会话（读不到令牌/服务异常）：停止等待并如实提示，避免永远不开页面
                 $ok = $true
-                try { $notify.ShowBalloonTip(8000, 'DSH', '端口已就绪但未能完成浏览器认证，将尝试直接打开页面；若看到 401，请用 dsh-web.log 里带 token 的地址打开一次。', 'Warning') } catch {}
+                try { Show-DshNotice(8000, 'DSH', '端口已就绪但未能完成浏览器认证，将尝试直接打开页面；若看到 401，请用 dsh-web.log 里带 token 的地址打开一次。', 'Warning') } catch {}
             }
-            if ($ok) { $readyTimer.Stop(); if (-not $script:browserOpened) { $script:browserOpened = $true; $notify.ShowBalloonTip(2000, 'DSH', 'DSH Web 已就绪，打开浏览器。', 'Info'); try { Open-Url $webUrl } catch {} } }
+            if ($ok) { $readyTimer.Stop(); if (-not $script:browserOpened) { $script:browserOpened = $true; Show-DshNotice(2000, 'DSH', 'DSH Web 已就绪，打开浏览器。', 'Info'); try { Open-Url $webUrl } catch {} } }
         } catch {}
     })
     $readyTimer.Start()

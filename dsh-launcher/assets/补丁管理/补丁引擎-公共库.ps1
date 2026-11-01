@@ -14,9 +14,12 @@ $ErrorActionPreference = 'Stop'
 if (-not $ProfileDir) { $ProfileDir = $env:DSH_PATCH_PROFILE_DIR }
 if (-not $BackupDir) { $BackupDir = $env:DSH_PATCH_BACKUP_DIR }
 
-function Assert-ProfileDir {
-    if (-not $ProfileDir -or -not (Test-Path -LiteralPath $ProfileDir)) {
-        throw "ProfileDir 无效或不存在: '$ProfileDir'"
+function Assert-PatchTargetRoot {
+    # 0.2.x 没有 profile node_modules：只要 DSH 根可用即视为有目标根
+    $hasProfile = ($ProfileDir -and (Test-Path -LiteralPath $ProfileDir))
+    $hasRoot = ($env:DSH_PATCH_DSH_ROOT -and (Test-Path -LiteralPath $env:DSH_PATCH_DSH_ROOT))
+    if (-not $hasProfile -and -not $hasRoot) {
+        throw "补丁目标根无效：ProfileDir='$ProfileDir' DSH_ROOT='$env:DSH_PATCH_DSH_ROOT'"
     }
 }
 
@@ -41,14 +44,60 @@ function Write-BackupManifest([hashtable]$map) {
     [System.IO.File]::WriteAllText((Backup-ManifestPath), $json, (New-Object System.Text.UTF8Encoding($false)))
 }
 
+# ---------- 目标定位（2026-10-31 适配 DSH 0.2.x） ----------
+# 旧布局 0.1.x：<profile>\node_modules\@deepseek-ai\<包>\lib\*.js
+# 新布局 0.2.x：profile 不再携带 @deepseek-ai 包（bundles 改由源码树提供），
+#              目标是 <DSH 根>\packages\<任意层级>\<包目录>\lib\*.js，
+#              因此按 package.json 的 name 反查包目录。
+$script:DshPackageMap = $null
+
+function Get-DshPackageMap {
+    if ($script:DshPackageMap) { return $script:DshPackageMap }
+    $map = @{}
+    $root = $env:DSH_PATCH_DSH_ROOT
+    if ($root -and (Test-Path -LiteralPath $root)) {
+        $pkgs = Join-Path $root 'packages'
+        if (Test-Path -LiteralPath $pkgs) {
+            Get-ChildItem -LiteralPath $pkgs -Recurse -Depth 3 -Filter 'package.json' -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -notmatch '[\\/](node_modules|lib|dist)[\\/]' } |
+                ForEach-Object {
+                    try {
+                        $j = [System.IO.File]::ReadAllText($_.FullName, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+                        $n = [string]$j.name
+                        if ($n -and -not $map.ContainsKey($n)) { $map[$n] = [System.IO.Path]::GetDirectoryName($_.FullName) }
+                    } catch {}
+                }
+        }
+    }
+    $script:DshPackageMap = $map
+    return $map
+}
+
+function Resolve-PatchTarget([string]$RelPath) {
+    # ① 旧布局优先：profile 里真有这个文件或它所在目录时，保持原行为
+    if ($ProfileDir -and (Test-Path -LiteralPath $ProfileDir)) {
+        $p = Join-Path $ProfileDir $RelPath
+        $d = Split-Path -Parent $p
+        if ((Test-Path -LiteralPath $p) -or (($RelPath -notmatch '^@deepseek-ai[\\/]') -and (Test-Path -LiteralPath $d))) { return $p }
+    }
+    # ② 新布局：@deepseek-ai\<包>\<剩余> → 源码树里同名包的目录
+    if ($RelPath -match '^@deepseek-ai[\\/]([^\\/]+)[\\/](.+)$') {
+        $pkgName = '@deepseek-ai/' + $Matches[1]
+        $rest = $Matches[2]
+        $map = Get-DshPackageMap
+        if ($map.ContainsKey($pkgName)) { return (Join-Path $map[$pkgName] $rest) }
+    }
+    return $null
+}
 # 把补丁载荷文件安装到目标：
 #   - 目标已存在：先备份原文件（同一文件只备份一次），再覆盖；
 #   - 目标不存在：直接复制，并在清单里记为新增（值 null）。
 #   RelPath      ：相对 ProfileDir 的目标路径，如 @deepseek-ai\dsh-client-ui-workspace\lib\client.js
 #   PayloadFile  ：补丁目录内载荷文件的绝对路径
 function Install-PatchedFile([string]$RelPath, [string]$PayloadFile) {
-    Assert-ProfileDir
-    $dest = Join-Path $ProfileDir $RelPath
+    Assert-PatchTargetRoot
+    $dest = Resolve-PatchTarget $RelPath
+    if (-not $dest) { throw "无法定位补丁目标: $RelPath（DSH 根='$env:DSH_PATCH_DSH_ROOT'，profile='$ProfileDir'）" }
     $destDir = Split-Path $dest -Parent
     if (-not (Test-Path -LiteralPath $destDir)) {
         throw "目标目录不存在: $destDir"
@@ -78,7 +127,8 @@ function Restore-AllBackups {
     $failed = @{}
     foreach ($RelPath in ($map.Keys | Sort-Object)) {
         $backupFile = $map[$RelPath]
-        $dest = Join-Path $ProfileDir $RelPath
+        $dest = Resolve-PatchTarget $RelPath
+        if (-not $dest) { Write-Host "    失败：无法定位 $RelPath（DSH 根='$env:DSH_PATCH_DSH_ROOT'）" -ForegroundColor Yellow; $failed[$RelPath] = $backupFile; continue }
         $ok = $false
         if ($backupFile -ne $null) {
             if (Test-Path -LiteralPath $backupFile) {

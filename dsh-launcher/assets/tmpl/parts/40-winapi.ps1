@@ -1,9 +1,11 @@
 __MODE_WINACTIVATE_BODY__function Open-DshApp {
-    # 优先打开用户已手动安装的「网址应用」（PWA）：已有窗口则恢复+置顶（不开多个），无则启动。
+    # 打开 DSH 主窗口：已有窗口则恢复+置顶（不开多个）；没有才启动，且只启动一次。
     # 检测：读 Edge Preferences.web_apps.daily_metrics["http://127.0.0.1:3080/"].installed
     # 已装且窗口已存在 → PostMessage(SC_RESTORE) + SetForegroundWindow（实测对 Edge PWA 有效）；
-    #   窗口不存在 → msedge --app-id 启动；未装 PWA → 回退普通浏览器（返回 $false）
+    #   没有窗口 → msedge --app-id=<已装 PWA> 启动一次（2026-10-25 起只发一次，不再两段重试）；
+    #   未装 PWA → 打开 Edge 页面 + 气泡引导「安装为应用」（返回 $true）
     param([string]$Url = $webUrl)
+    # 已装 PWA 的应用 id（与 setup.ps1 建的 DSH应用.lnk 同一个）
     $appId = 'hgiemfgfjhalibdoboikeiepnnjapnpc'
     $edge = $null
     # 用 [Environment]::GetFolderPath 而非 $env:ProgramFiles——托盘/安装流程若从 PATH 被精简的宿主进程
@@ -31,14 +33,14 @@ __MODE_WINACTIVATE_BODY__function Open-DshApp {
         try { Start-Process -FilePath $edge -ArgumentList $Url -ErrorAction Stop } catch {}
         if (-not $script:pwaGuideShown) {
             $script:pwaGuideShown = $true
-            try { $notify.ShowBalloonTip(8000, 'DSH 安装为应用', '已打开 DSH 页面。点 Edge 地址栏右侧的「安装」图标，选「安装」，即可变成独立窗口应用（装好后双击托盘将直接打开它）。', 'Info') } catch {}
+            try { Show-DshNotice(8000, 'DSH 安装为应用', '已打开 DSH 页面。点 Edge 地址栏右侧的「安装」图标，选「安装」，即可变成独立窗口应用（桌面会多一个「DSH应用」快捷方式，双击它打开的就是这个应用窗口）。', 'Info') } catch {}
         }
         return $true   # 已处理（打开页面+引导），不让 Open-Url 再开普通网页
     }
     # 编译 Win32 辅助类（聚焦已有窗口，不开新的）
 __MODE_WINACTIVATE_CALL__
-    # 只认 PWA 应用窗口：普通浏览器窗口（标题以 "- Microsoft Edge" 结尾）里的 DSH 标签页不算，
-    # 防止 Edge 把 --app-id 冷启动偶发开成标签后，浏览器窗口抢焦点（2026-08-30 实测案例）
+    # 只认应用窗口：普通浏览器窗口（标题以 "- Microsoft Edge" 结尾）里的 DSH 标签页不算，
+    # 防止 --app=URL 被 Edge 转发成标签页后，浏览器窗口抢焦点（2026-08-30 实测案例）
     function Get-DshAppWindows {
         $appWins = @()
         $sb = New-Object System.Text.StringBuilder 300
@@ -55,20 +57,38 @@ __MODE_WINACTIVATE_CALL__
         [DshWinActivate]::RestoreAndFocus($wins[0])
         return $true
     }
-    # 冷启动重试：Edge 152 起 --app-id 在已有浏览器会话时可能被转发成普通标签页（实测）；
-    # 第 1 次试 --app-id（真 PWA 身份），失败改 --app=URL（应用模式窗口，无需注册，Edge 152 实测可用）；
-    # 仍无应用窗口则认输返回 $false，由 Open-Url 回退开普通标签页（保证双击一定有页面出来）
-    $tryArgs = @("--app-id=$appId", "--app=$Url")
-    # 带令牌入口优先用 --app=URL（全新会话/无 cookie 时不会被 401 挡住）；裸 URL 时仍先试已注册的 PWA 身份
-    if ($Url -like '*?token=*') { $tryArgs = @("--app=$Url", "--app-id=$appId") }
-    for ($attempt = 0; $attempt -lt 2; $attempt++) {
-        try { Start-Process -FilePath $edge -ArgumentList @($tryArgs[$attempt]) -ErrorAction Stop } catch { continue }
-        Start-Sleep -Seconds 4
+    # 冷启动（2026-10-25 三轮定稿，按用户指定分两级）：
+    #   默认模式 = --app-id=<已装 PWA>：无标题栏的独立应用窗口（WCO，没有标签栏/地址栏）；
+    #   降级模式 = --app=<带令牌 URL>：带标题栏的应用窗口（页面能用、观感差一档，只作兜底）。
+    # 旧实现（1.1.89~1.1.93）的毛病不只是"两种外观"：它先 --app=URL 睡 4 秒、再按需补发 --app-id，
+    # 所以表现为"先冒带标题栏的那个、4 秒后再冒无标题栏的"，关掉第一个正好触发第二个。
+    # 现在：默认入口只发一次 → 250ms 轮询最多 12 秒（Edge 冷启动要几秒，留足余量以免误判降级；
+    # 窗口一出现就置顶返回，用户随后关掉也不会补开）。只有"整整 12 秒一个窗口都没枚举到"
+    # （PWA 起不来，或标题一直不就位——例如 cookie 过期后的 401 页）才降级发 --app=<带令牌 URL>，
+    # 再轮询 6 秒。两条都没窗口时才返回 $false，交给 Open-Url 用默认浏览器做最后兜底。
+    # 令牌两处都带着：--app-id 用 Chromium 的 app-launch-url 开关捎进去（认就顺带刷新 30 天 cookie，
+    # 不认就退回 app 自己的 start_url，等于旧版 --app-id 行为），--app=URL 本身就在令牌入口上。
+    $launchArgs = @("--app-id=$appId", "--app-launch-url-for-shortcuts-menu-item=$Url")
+    try { Start-Process -FilePath $edge -ArgumentList $launchArgs -ErrorAction Stop } catch { return $false }
+    for ($i = 0; $i -lt 48; $i++) {
+        Start-Sleep -Milliseconds 250
         $wins = @(Get-DshAppWindows)
         if ($wins.Count -gt 0) {
             [DshWinActivate]::RestoreAndFocus($wins[0])
             return $true
         }
     }
+    # 降级：默认入口 12 秒内没出窗口 → 用带令牌 URL 的应用窗口兜底（令牌当场换 cookie，不会 401）
+    try { Start-Process -FilePath $edge -ArgumentList @("--app=$Url") -ErrorAction Stop } catch { return $true }
+    for ($i = 0; $i -lt 24; $i++) {
+        Start-Sleep -Milliseconds 250
+        $wins = @(Get-DshAppWindows)
+        if ($wins.Count -gt 0) {
+            [DshWinActivate]::RestoreAndFocus($wins[0])
+            return $true
+        }
+    }
+    # 两级入口都没枚举到窗口：才返回 $false，由 Open-Url 用默认浏览器做最后一次兜底（保证一定有页面）。
+    # 这种情况只可能是 Edge 完全不响应启动请求；正常与降级两种结果都已在上面的轮询里返回。
     return $false
 }
