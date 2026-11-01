@@ -1,6 +1,9 @@
 @echo off
 chcp 936 >nul
 setlocal
+REM --- optional home: keep CLI and tray on the same DSH home directory ---
+if exist "%~dp0dsh-home.txt" for /f "usebackq delims=" %%H in ("%~dp0dsh-home.txt") do set "DSH_HOME=%%H"
+REM ---------------------------------------------------------------------
 REM ============================================================
 REM  dsh.cmd - DSH CLI 入口包装（DSH Launcher 生成，PATH 模式）
 REM ============================================================

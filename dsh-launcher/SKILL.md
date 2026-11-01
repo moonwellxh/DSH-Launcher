@@ -525,3 +525,12 @@ launcher 配套，**最终由用户定义**。AI 只能做预判断（一键启�
 未经用户确认，AI 不得自行决定技能归属并执行归档。当前 `assets\配套技能\` 目录内的配套
 是已获用户认可的历史决定（**目录即事实源**，增删由用户拍板后放/删 zip 即生效）；
 `cad-scan-eye` 扫描之眼已明确为根目录独立能力。
+
+## 本机工具索引（2026-11-01）
+
+`assets\tools\` 下是可直接复用的本机工具，调用时用绝对路径 `%USERPROFILE%\.agents\skills\dsh-launcher\assets\tools\<名>`：
+
+- `probe-elevated.ps1`：读进程令牌，报 `DSH-TRAY` / `DSH-WEB` / 本 shell / explorer 是否为 ELEVATED（判托盘与服务权限，最常用）。
+- `switch-dsh-home3.ps1` + `run-switch3.ps1`：切换 DSH 家目录（改 `dsh-home.txt`，托盘 `Start-DshServer` 读取）。必须用 `run-switch3.ps1 -NewHome <路径> -Now` 经计划任务执行，否则脚本会自检拒绝（避免像 v1 那样把自己杀掉）。
+- `test-frontend-cache.mjs`：验前端三档缓存头（index `no-store`、内容寻址 `immutable`、普通静态 `no-cache`+ETag+304）。
+- `test-model-menu-plugin.mjs`：验 client 插件注册格式（`window.__ModuleLoader__.load`）。
