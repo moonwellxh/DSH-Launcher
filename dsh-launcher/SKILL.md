@@ -13,7 +13,7 @@ description: >
 给任意一台机器安装「一键启动 + 托盘手动关闭」的 DSH 启动方案。
 > ⚠️ **安装/更新本技能后的第一条强制步骤**：必须重跑 `assets\setup.ps1`
 > （`powershell -NoProfile -ExecutionPolicy Bypass -File "<技能目录>\assets\setup.ps1" -InstallDir "<启动器目录>" -NoShortcut`）。
-> 它会重新生成启动脚本并**自动按清单应用补丁**（见「补丁自动载入清单」）；**跳过此步 = 技能更新不完整（补丁未打）**。
+> 它会重新生成启动脚本（补丁体系已于 2026-11-06 退役，不再应用补丁）；**跳过此步 = 启动脚本未刷新**。
 
 ## 到新机器怎么用（二选一）
 
@@ -53,7 +53,7 @@ description: >
    ```
 
    无需 agent 参与，双击或命令行执行即可完成安装。
-3. **以后更新**：把新 `dsh-launcher__skillhub.zip` 放到 `assets\` 目录（或直接拖到脚本上），双击 `assets\更新安装.cmd`——它自动完成「解压覆盖技能 + 重跑 setup.ps1（自动应用补丁）+ **刷新桌面快捷方式**（指向当前安装目录）+ **自动启动托盘**（就绪后自动开浏览器一次）」。若托盘图标未出现，先结束残留的 DSH-tray powershell 进程再启动；若 setup 失败会明确报错并提示原因。
+3. **以后更新**：把新 `dsh-launcher__skillhub.zip` 放到 `assets\` 目录（或直接拖到脚本上），双击 `assets\更新安装.cmd`——它自动完成「解压覆盖技能 + 重跑 setup.ps1 + **刷新桌面快捷方式**（指向当前安装目录）+ **自动启动托盘**（就绪后自动开浏览器一次）」。若托盘图标未出现，先结束残留的 DSH-tray powershell 进程再启动；若 setup 失败会明确报错并提示原因。
 
 ## setup.ps1 参数
 
@@ -68,7 +68,7 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 
 `setup.ps1` 在安装流程中自动调用 `Install-GeneralMemoryRule0`，把「通用记忆规则 0」
 （实事求是 / 独立认真判断 / 禁止讨好、用户画像与附和；正文见 setup.ps1 内实现）幂等
-写入 DSH 用户全局指令文件 `$DSH_HOME\AGENTS.md`（`$DSH_HOME` 未设时 = `~\.dsh\AGENTS.md`）：
+写入 DSH 用户全局指令文件 `$DSH_HOME\AGENTS.md`（`$DSH_HOME` 未设时 = `$DSH_HOME\AGENTS.md`）：
 
 - **只装一次 = 永久生效**：只要跑过一次 setup.ps1（含 `就地安装.bat` / `更新安装.cmd`
   触发），规则 0 即进入该机通用记忆；DSH 每次会话自动加载 AGENTS.md（先于任何项目级
@@ -86,8 +86,7 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 > 升级、卸载 DSH 本体；不运行 npm/pnpm；不改 PATH。DSH 怎么装由**用户指定**：
 > 源码树 = `git pull` + `pnpm install` + `pnpm build --profile official`（产物
 > `apps\cli\lib\bin.js`，缺它源码树识别不到）；npm 全局 = `npm update -g @deepseek-ai/dsh`。
-> setup.ps1 只做三件事：① 探测**已装好**什么；② 生成启动脚本/快捷方式；③ 按补丁清单
-> 打补丁（可挂起）。它的 `mode=path/source` 只是"从已装好的里面挑一个来启动"，
+> setup.ps1 只做三件事：① 探测**已装好**什么；② 生成启动脚本/快捷方式；③ 安装配套技能（补丁体系已于 2026-11-06 退役）。它的 `mode=path/source` 只是"从已装好的里面挑一个来启动"，
 > **不影响也不修改任何安装**。若 PATH 有 dsh 且源码树也存在，会打黄色警告并说明
 > 如何切到源码树运行。
 
@@ -105,7 +104,7 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
 | `启动DSH.bat` | 菜单启动器（1 托盘+Web / 2 TUI / 3 Headless / 0 退出） |
 | `启动DSH-托盘.cmd` | 一键托盘（跳过菜单，直接启动 + 开浏览器；**已自隐藏窗口**：首次进入经 `run-hidden.vbs` 隐藏重入，双击不再闪命令行窗口） |
 | `启动DSH-托盘.vbs` | 一键托盘（**零命令行窗口**，wscript 直启 DSH-tray.ps1，推荐双击入口；配套 `run-hidden.vbs` 供 .cmd 自隐藏重入） |
-| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「启动托盘 x.x.x 版（点击可更新/已是最新）」（点击**与 GitHub 双向同步**（发布级）：配置优先环境变量 `DSH_SYNC_REPO` / `DSH_SYNC_BRANCH` / `DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 内置默认（repo=`moonwellxh/DSH-Launcher`、branch=`main`）；网络自动探测系统代理、直连↔代理双路回退（命令级 `-c` 注入，不改全局 git 配置）；git 全程非交互（禁终端提示 + 禁 GCM 弹窗），失败按类给出可操作提示（未装 git / 认证缺失或失效 / 仓库分支 404 / 网络不通 / 非快进）；以仓库源树 `dsh-launcher/` 为比对对象逐文件内容比对（文本先归一化 CRLF→LF 再哈希，避免 autocrlf 造成"同内容不同哈希"；跳过机器特定文件 install-dir.txt），方向**永不自动判定**：引擎只按版本号/时间戳/内容差异给出**建议**，由用户在弹出的方向选择框自行决定 上传到 GitHub / 拉取 GitHub 版本 / 取消，确认后才执行（绝不自动执行方向；2026-09-05 规则）。上传方向 = 更新源树 + 发布 **主包+全部配套** 到 `releases\<版本>\` + git 提交推送（`HEAD:<branch>`，token 经 http.extraheader 仅内存注入、不落盘不打印）并校验，一致则跳过，时间戳相同但内容不同则按 **git 提交时间 vs 本地修改时间**分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版；同步带互斥锁防并发；缓存损坏自动重建）；不信任缓存/版本号）；其余菜单项：打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
+| `DSH-tray.ps1` | 系统托盘：右键菜单**顶部分隔线上方三行**——第一行「DSH 版本 x.x.x」**加粗**（点击打开 DeepSeek 文档 deepseekdocs.com）、第二行「最新版本 x.x.x（点击升级）」（可更新时可点，弹窗确认：可编辑提示词 + 选模型/推理等级后 `selectModel`+`prompt` 提交，无需粘贴）、第三行「启动托盘 x.x.x 版（点击可更新/已是最新）」（点击**与 GitHub 双向同步**（发布级）：配置优先环境变量 `DSH_SYNC_REPO` / `DSH_SYNC_BRANCH` / `DSH_SYNC_TOKEN` > `$DSH_HOME\gh-sync\config.json` > 内置默认（repo=`moonwellxh/DSH-Launcher`、branch=`main`）；网络自动探测系统代理、直连↔代理双路回退（命令级 `-c` 注入，不改全局 git 配置）；git 全程非交互（禁终端提示 + 禁 GCM 弹窗），失败按类给出可操作提示（未装 git / 认证缺失或失效 / 仓库分支 404 / 网络不通 / 非快进）；以仓库源树 `dsh-launcher/` 为比对对象逐文件内容比对（文本先归一化 CRLF→LF 再哈希，避免 autocrlf 造成"同内容不同哈希"；跳过机器特定文件 install-dir.txt），方向**永不自动判定**：引擎只按版本号/时间戳/内容差异给出**建议**，由用户在弹出的方向选择框自行决定 上传到 GitHub / 拉取 GitHub 版本 / 取消，确认后才执行（绝不自动执行方向；2026-09-05 规则）。上传方向 = 更新源树 + 发布 **主包+全部配套** 到 `releases\<版本>\` + git 提交推送（`HEAD:<branch>`，token 经 http.extraheader 仅内存注入、不落盘不打印）并校验，一致则跳过，时间戳相同但内容不同则按 **git 提交时间 vs 本地修改时间**分析并弹窗展示分析/建议，由用户确认方向（上传到 GitHub/拉取 GitHub 版本/取消）后才执行（绝不自动覆盖；git 历史保留旧版；同步带互斥锁防并发；缓存损坏自动重建）；不信任缓存/版本号）；其余菜单项：打开 superagent 面板 (3082) / 打开 Web UI / TUI / Headless / DS 开放平台（platform.deepseek.com）/ 重启 / 退出并停止；单击无动作、双击开浏览器；状态气泡保留 |
 | `dsh-toast.ps1` | 右下角自绘提示窗（2026-10-26）：`-InstallDir <目录> [-Title .. -Text .. -Seconds 5]`；「硬重启托盘」起点用它提示，不依赖系统通知设置 |
 | `dsh-tray.log` | 托盘提示留痕（运行期生成，非分发产物）：每张卡片一行 + 硬重启开始/结果；超 1 MB 轮转 `dsh-tray.log.1` |
 | `dsh-log.ps1` | 托盘日志查看器（2026-10-26）：`-Tail N` / `-Level WARN,ERROR` / `-Event restart.start,restart.setup` / `-Summary` / `-Raw`；解析规则唯一实现 |
@@ -151,12 +150,12 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
     气泡提示「点安装图标安装为独立应用」，`$script:pwaGuideShown` 保证同一次托盘生命周期只提示一次。
 - **Web 看护重启上限**：自动重启连续失败 3 次 → 停止自动重启并气泡提示
   「DSH Web 反复启动失败（可能 DSH 版本过旧或安装异常），请升级 DSH」。服务恢复后计数
-  归零。**老 DSH + 新启动器**场景：补丁被兼容检查跳过（正常），若 web 起不来即升级 DSH。
+  归零。**老 DSH + 新启动器**场景：若 web 起不来即升级 DSH。
 - **托盘手动关闭**：托盘脚本记录 3080 端口的监听 PID，右键「退出并停止 DSH」时
   `taskkill /PID <pid> /T /F` 停止整棵进程树。
 - **硬重启托盘（2026-10-26 对抗性审查后重做，1.1.96）**：点击先弹确认框，写明四步副作用
   （结束 dsh web 进程树＝当前 AI 回合中断 / 只关 DSH 应用窗口 / 重跑安装脚本并可能改写
-  `~/.dsh/AGENTS.md` 与配套技能 / 重启托盘）。执行链：① `Test-DshListenerIdentity` 先验 3080
+  `$DSH_HOME/AGENTS.md` 与配套技能 / 重启托盘）。执行链：① `Test-DshListenerIdentity` 先验 3080
   属主（进程名 `node|dsh` → 命令行含 `bin.js|dsh|deepseek-harness` → 父进程是托盘），判不准就
   **不杀**并在气泡里说明；② `CloseDshWindows` 只关 Edge 进程承载、且标题不以 `- Microsoft Edge`
   结尾的应用窗口（普通浏览器窗口与记事本/Word 等一律不碰）；③ setup.ps1 先 `Test-Path`，缺失则
@@ -196,7 +195,7 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
   变成 CRLF，与 zip 内 LF"同内容不同哈希"，必须归一化；二进制如 zip/ico/png 保持原始字节）；**跳过机器特定文件**
   （`assets/install-dir.txt`）；方向**永不自动判定**：引擎只给出建议（版本号/时间戳/内容差异信号），由用户在弹出的方向选择框自行决定 上传/拉取/取消——绝不自动执行方向（2026-09-05 规则）；时间戳相同但内容不同时按 **git 提交时间 vs
   本地修改时间**分析并弹窗由用户确认方向（上传/拉取/取消），**绝不自动覆盖远端良包**。配置/健壮性：repo/branch/token
-  可配置（环境变量 `DSH_SYNC_REPO/DSH_SYNC_BRANCH/DSH_SYNC_TOKEN` > `~\.dsh\gh-sync\config.json` > 默认）；
+  可配置（环境变量 `DSH_SYNC_REPO/DSH_SYNC_BRANCH/DSH_SYNC_TOKEN` > `$DSH_HOME\gh-sync\config.json` > 默认）；
   网络自动探测系统代理（注册表）直连↔代理双路回退；git 非交互（`GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=Never`
   防弹窗挂起）；失败分类为可操作提示（未装 git / 认证缺失或失效 / 仓库或分支 404 / 网络不通 / 非快进）；
   上传 = 更新源树 + 发布 5 个 zip（主包+4 配套，.NET ZipFile 正斜杠条目名、排除 install-dir.txt）到
@@ -231,7 +230,12 @@ setup.ps1 -CheckOnly               # 只探测、打印结果，不安装
   含该字样的 powershell（排查脚本等无关进程）。现行为 `-File\s+.*DSH-tray\.ps1`
   （只杀真正以 `-File` 方式运行托盘脚本的进程；`.*` 版同时支持带空格的脚本路径）。
 
-## 补丁自动载入清单（assets\补丁管理\）
+## 补丁自动载入清单（assets\补丁管理\）— 已于 2026-11-06 退役
+
+> **本体系已停用。** 补丁引擎、自动载入清单、重打/还原 bat 已移入
+> `D:\DSHS\_bak\补丁管理-退役-20261106-174104\`；`setup.ps1` 里的「应用补丁」段已整段删除，
+> 不再自动装补丁。唯一在用的补丁已独立到 `assets\独立补丁\前端缓存no-store\`
+> （含操作指南与给 agent 的提示词）。下面内容保留作历史参考，**不要再按它操作**。
 `assets\补丁管理\` 是本技能携带的 **DSH 补丁自动载入清单**：
 | 文件 | 作用 |
 |---|---|
@@ -255,29 +259,29 @@ package.json 版本，与清单 `compatibleDsh` 字段比对，不在列表即�
 `setup.ps1` 在安装末尾自动按清单应用补丁。**DSH 重装 / 升级导致补丁失效后，重跑
 `setup.ps1`（或 `补丁引擎-应用还原检查.ps1`）即可恢复**；
 `补丁引擎-应用还原检查.ps1 -Restore` 可一键还原官方原状。
-- 补丁备份默认在 `~\.dsh\patches-backup\<补丁id>\`（可用 `-BackupRoot` 覆盖）；
+- 补丁备份默认在 `$DSH_HOME\patches-backup\<补丁id>\`（可用 `-BackupRoot` 覆盖）；
 - **幂等与验证**：`setup.ps1` / `重打全部补丁.bat` 均可重复运行，不会重复打或损坏（已应用自动跳过）；验证补丁是否生效：跑 `补丁引擎-应用还原检查.ps1 -CheckOnly`（列计划即已应用清单）；还原用 `补丁引擎-应用还原检查.ps1 -Restore`。注意：还原成功后备份清单会被清空为 `{}` 且备份目录会被删除，故「目录存在=已应用」不再可靠；引擎的「是否已应用」判断以三条件齐备为准——**备份目录存在 + `backup-manifest.json` 存在 + 清单解析后非空（含备份条目）**。
 - 每个补丁一个独立子目录 `补丁管理\补丁NN-功能名\`，含安装脚本 / 还原脚本 / `载荷文件\`
   （`id` 决定备份目录名保持稳定，`dir` 决定源码子目录名可随意起名，详见目录内 README）；
 - **清单控制安装**：`自动载入清单-manifest.json` 里每个补丁的 `enabled` 字段决定是否随 `setup.ps1` / `重打全部补丁.bat` 自动安装：`true` = 安装；`false` = **挂起（跳过不装）**。需要临时停用某补丁（如与新版本冲突）时置 `false` 即可，改回 `true` 再跑一次即恢复；不必删除补丁目录。
 - **新增补丁三步**：① 写载荷与安装/还原脚本 → ② 在 `自动载入清单-manifest.json` 登记（`enabled: true`）→ ③ 同步 `assets\补丁管理\` 并重打包 zip（见下）。
-- 已知补丁登记（与 `assets\补丁管理\自动载入清单-manifest.json` 保持一致）：
-  - `补丁02-前端缓存no-store`（id: `dsh-frontend-static-no-store`，适配 **0.1.5-rc.1**，2026-09-12，**启用/已应用**）：
+- 已知补丁登记（历史台账，**已全部退役**：补丁01/03 于 2026-10-31 移除，补丁02 于 2026-11-06 独立到 `assets\独立补丁\前端缓存no-store\`）：
+  - `补丁02-前端缓存no-store`（id: `dsh-frontend-static-no-store`，适配 **0.2.1-rc.2**；**2026-11-06 已独立到 `assets\独立补丁\前端缓存no-store\`，不再由任何自动流程安装**；历史上在 0.2.1-rc.5 上未生效——升级换包已覆盖 install 载荷（实测 `lib\index.js` 3899 B 与备份原版 SHA256 相同、不含 no-store/immutable），且 `compatibleDsh` 不含 rc.5，引擎会跳过；属待适配项）：
     `packages/host/frontend-static` 的静态资源缓存策略——渲染的 index `no-store`、文件名带内容哈希的资源
     `public, max-age=31536000, immutable`、其余文件 `no-cache` + ETag（命中 `if-none-match` 回 304）。
     根治「升级/前端重建后浏览器复用旧 index.html → 白屏 / `client-modules: boot manifest batches must be an array`」。
     载荷只覆盖真正运行的构建产物 `@deepseek-ai\dsh-host-frontend-static\lib\index.js`
     （不覆盖 tracked 的 TS 源码，避免占用 git 工作树、阻碍升级第一步 `git pull`）。
-  - `补丁01-档案柜v1-归档升级版`（id: `dsh-recycle-bin-v1`，适配 0.1.1-rc.2，2026-08-23，**挂起 `enabled=false`**）：
+  - `补丁01-档案柜v1-归档升级版`（id: `dsh-recycle-bin-v1`，适配 0.1.1-rc.2，2026-08-23，**已废弃：2026-10-31 从清单与目录移除，仅 patches-backup 留 stale 副本**）：
     会话 ⋯ 菜单「移入档案柜」+ 侧边栏底部「档案柜」分区 + 恢复。**与 0.1.5-rc.1 不兼容**：5 个目标包中
     `dsh-client-runtime` / `dsh-host-apiproxy` 已被上游删除（profile 里是悬空 junction，引擎会直接抛错）；
     载荷是旧构建整文件覆盖；「归档」半边已由上游原生实现。**不要启用**。
-  - `补丁03-档案柜v2-恢复半边`（id: `dsh-recycle-bin-restore-v2`，适配 **0.1.5-rc.1**，2026-09-12，**启用/已应用**）：
+  - `补丁03-档案柜v2-恢复半边`（id: `dsh-recycle-bin-restore-v2`，适配 **0.1.5-rc.1**，2026-09-12，**已废弃：2026-10-31 从清单与目录移除，仅 patches-backup 留 stale 副本**）：
     上游已原生提供「归档」（⋯ 菜单「归档会话」+ RPC `workspace/archiveSession` + `archivedSessionIds`），本补丁只补缺失的另一半——
     侧边栏底部「档案柜」入口（`sidebar.footer.action` 列表槽）+ 已归档会话列表 + 一键恢复；新增服务端 Remote
     `workspace/restoreSession`（幂等，复用既有 `{type:'archived'}` 增量广播）。需求与设计见
-    `docs\补丁-档案柜v2-需求与设计-0.1.5-rc.1.md`；源码增量留档（重适配用）见补丁目录内
-    `源码增量-档案柜v2.patch` + `源码增量-留档说明.md`。应用后需重启 dsh web。
+    `docs\补丁-档案柜v2-需求与设计-0.1.5-rc.1.md`；源码增量留档原本在补丁目录内，已于 2026-10-31 随目录一同删除
+    （该补丁已废弃，不再需要重适配）。
 
   - 适配方法（新增/改造补丁时复用）：对每个目标文件 diff「上游原状 vs 打补丁后」提取增量，再按新版上下文套用；
     或（更稳）在源树改 TS → `pnpm run build:lib:host` / `build:lib:client` → 取构建产物做载荷；
@@ -291,9 +295,8 @@ package.json 版本，与清单 `compatibleDsh` 字段比对，不在列表即�
 
 1. **更新 DSH**：源码树安装 → 进入源树 `git pull` → `pnpm install` → `pnpm build`；
    PATH/npm 安装 → `npm update -g @deepseek-ai/dsh`。
-2. **更新一键启动**：重跑 setup.ps1 —— 但**执行前**先把本技能
-   `assets\补丁管理\自动载入清单-manifest.json` 中**所有补丁 `enabled` 置 `false`
-   （全部挂起）**，确保 setup.ps1 不应用任何补丁。
+2. **更新一键启动**：重跑 setup.ps1。补丁体系已于 2026-11-06 退役，`setup.ps1` 不再应用任何补丁，
+   无需再改 manifest。若确实要装 `assets\独立补丁\` 里的补丁，另行按该目录的 `操作指南.md` 处理。
 3. **分析一键启动技能及其自带脚本**（分析对象：dsh-launcher 本体 + setup.ps1 +
    模板 + `assets\配套技能\` 内全部脚本技能 zip-archive-ops / batch-files /
    charset-pitfalls / skill-install-ops + 补丁清单；对照新版本实际内容逐个分析）：
@@ -338,7 +341,7 @@ profile 的 `package.json` / `cordis.patch.yml`）时，**无论是否当次对�
 
 **可逆留痕（同一规定）**：每次改动都要留下可回滚的痕迹——改前用秒级时间戳备份（放对象同级的
 `_bak\` 或 `_backup\`，格式 `原名.bak-yyyyMMdd-HHmmss`）、写明回滚命令、并在
-`~/.dsh/AGENTS-changelog.md` 记一条变更记录。三样缺一视同未完成，不得上机。
+`$DSH_HOME/AGENTS-changelog.md` 记一条变更记录。三样缺一视同未完成，不得上机。
 ## 调试纪律（铁律，2026-08-25 事故教训）
 
 **托盘/启动器脚本调试，绝不在运行中的生成物上直接编辑。** 事故复盘：调试双击引导时，
@@ -382,13 +385,13 @@ IsZoomed/双击 Open-Url）、setup.ps1 BOM 合规、内嵌配套版本与配套
 （2026-08-30 教训：bump 后漏跑 setup 导致安装目录 `launcher.version` 滞后、托盘版本显示旧值）。
 ## 已装机器如何升级
 
-**更新后的必做步骤（不重跑 = 补丁未打、安装不完整）：**
+**更新后的必做步骤（不重跑 = 启动脚本未刷新）：**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "<技能目录>\assets\setup.ps1" -InstallDir "<安装目录>" -NoShortcut
 ```
 
-`setup.ps1` 一次完成：① 重新生成启动脚本；② **自动按 `assets\补丁管理\` 清单应用补丁**（幂等，已应用会跳过）。补丁仅在 DSH 重装/升级导致失效时才需要重打；验证方式：`~\.dsh\patches-backup\<补丁id>\` 目录存在且 `backup-manifest.json` 非空（含备份条目）即已应用，或跑 `assets\补丁管理\补丁引擎-应用还原检查.ps1 -CheckOnly`。
+`setup.ps1` 一次完成：① 重新生成启动脚本；② 安装 `assets\配套技能\` 内的配套技能。补丁体系已于 2026-11-06 退役，不再应用补丁；唯一的补丁在 `assets\独立补丁\前端缓存no-store\`，按需人工处理。
 
 **升级/打补丁/换前端插件后必须硬刷新浏览器（Ctrl+F5）重新加载 http://127.0.0.1:3080**：
 DSH 前端是 client-plugin 图（index.html 的 `__DSH_BOOT__` 指向带 rev 哈希的插件 JS），
@@ -405,8 +408,8 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 |---|---|
 | 只改 `SKILL.md` / `_meta.json` / `_icon.png` | 重装技能：解压 zip 覆盖 `~/.agents/skills\dsh-launcher` 即可 |
 | 改了 setup.ps1 或 `assets\tmpl\` 模板（`parts\*.ps1` / `mode-*.json`） | 重装技能 + 重跑一次 setup.ps1（重新生成安装目录里的启动脚本） |
-| 改了 `assets\补丁管理\*`（补丁载荷 / 清单 / 引擎） | 重装技能 + 重跑一次 `setup.ps1`（或直接跑 `assets\补丁管理\补丁引擎-应用还原检查.ps1`） |
-| 想一键完成上面任意一项 | 双击 `assets\更新安装.cmd`（新 zip 放 assets 目录或拖入），自动「覆盖技能 + 重跑 setup.ps1（自动应用补丁）」 |
+| 改了 `assets\独立补丁\*` | 重装技能即可（独立补丁不参与任何自动流程） |
+| 想一键完成上面任意一项 | 双击 `assets\更新安装.cmd`（新 zip 放 assets 目录或拖入），自动「覆盖技能 + 重跑 setup.ps1」 |
 
 原因：真正运行的是 `setup.ps1` 生成的脚本（`dsh.cmd`、`DSH-tray.ps1`、`启动DSH.bat` 等），
 光更新技能不会刷新这些生成物；`setup.ps1` 幂等，可安全重复执行。
@@ -418,6 +421,8 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 
 | 组件 | 版本 | 兼容 DSH 版本 | 说明 |
 |---|---|---|---|
+| dsh-launcher（一键启动本体） | 1.2.3 | 0.2.1-rc.2（并保留 0.1.5-rc.1、0.1.1-rc.2、0.1.0-rc.7） | **托盘取令牌加固**（2026-11-06，用户报障「托盘右键打不开 superagent」，提示「读不到启动令牌」）：`Get-SuperagentUrl` 原来按 mtime 扫「最新 5 个」`dsh-superagent-superagent-*.log`，任何更新的 0 字节日志（中断的启动、名字相近的别的 profile）都会把真正的启动日志挤出窗口。改为：① 整名匹配 `^dsh-superagent-superagent-\d{8}-\d{6}-\d+\.log$`；② 按文件名（内嵌启动时刻）倒序，而不是 mtime（实测 `…-163641-…log` 的 mtime 是 17:06）；③ 只看最近一次启动，读不到或没有令牌一律返回空串，不拿上一次启动的旧令牌去撞 401。审查：本地 GLM-5.3-Flash + 外包 CodeBuddy 双轨；CodeBuddy 指出首版 `catch { continue }` 会退回过期令牌，已据此改为只读最近一次。验证：函数级 8 项在 PowerShell 7 与托盘宿主 PS 5.1 双跑全过（含「同一合成目录下旧实现返回空、新实现取到 token」的对照）；真实 `.artifacts` 取到的 URL 返回 303；重新生成的 `DSH-tray.ps1` 与现场只差 `Get-SuperagentUrl` 一个 hunk；切换后托盘 pid 20164 ELEVATED、dsh web 未动。回滚：`D:\DSHS\_bak\DSH-tray.ps1.bak-20261106-012652`（还原后重启托盘）。 |
+| dsh-launcher（一键启动本体） | 1.2.2 | 0.2.1-rc.2（并保留 0.1.5-rc.1、0.1.1-rc.2、0.1.0-rc.7） | **托盘右键新增「打开 superagent 面板 (3082)」**（2026-11-05，用户要求只加这一项）：① `parts\00-header.ps1` 加 `$saUrl` / `$saLogDir`；② `parts\10-utils.ps1` 加 `Get-SuperagentUrl`（取最新 5 个 `.artifacts\dsh-superagent-superagent-*.log`、共享读打开、取文件内最后一个令牌；取不到返回空串，不静默回退裸 URL——3082 裸 URL 无令牌实测 401）；③ `parts\90-main.ps1` 菜单项排在「打开 Web UI」之后，handler 先探 3082 监听、再取令牌才 Open-Url。审查：本地 GLM-5.3-Flash + 外包 CodeBuddy 双送对拍；首轮生成的「回退裸 URL 静默 401」已修。验证：三片段回退原件→重生成 108,499 B 与改前生成物逐字节相等；改后→110,613 B 与候选逐字节相等；source 模式产物 PARSE-OK。**待推送 GitHub**（本地提交 ec8c7dd，`_meta` 1.2.1→1.2.2） |
 | dsh-launcher（一键启动本体） | 1.1.99 | 0.2.1-rc.2（并保留 0.1.5-rc.1、0.1.1-rc.2、0.1.0-rc.7） | **启动链两轮对抗审查后的加固**（2026-11-01，本地 GLM-5.3-Flash + 外包 CodeBuddy 双份审查）：① 互斥锁：首次 `WaitOne` 加 try/catch，`AbandonedMutexException` 按「已拿到锁」处理（上一版误判为忙，导致"已有托盘时再双击"杀掉旧托盘后自己退出）；② 交接判据重做：等待者写 `.dsh-handoff.<PID>.lock`，被任务拉起且已提权的托盘在 `$notify.Visible=$true` 之后写 `dsh-tray.ready`（内含 pid），等待者只在「自己标记消失 ∧ ready 新鲜 ∧ ready 里的 pid 存活」时 exit 0，超时 20 秒清理后降级启动；清理动作移到抢到锁之后，写完 ready 再清一次迟到标记；③ `schtasks` 加 `Wait-Process -Timeout 20` 并在超时/抛错时回收进程；④ 锁到手后统一重探 `$listener`（覆盖三条拿锁路径）；⑤ 看护里的 `Start-DshServer` 也包 try/catch；⑥ 「退出并停止 DSH」先 `Test-DshListenerIdentity` 再 `taskkill`；⑦ 属主判定补 `bin.ts`、去掉裸 `dsh`，判不准时用启动令牌兜底（只认 302/303 且要求 `Set-Cookie` 含 `dsh-auth-`，禁用系统代理）；⑧ 启动失败文案区分「找不到 Node」与「启动抛异常」，文案压到 41 字避免被卡片裁切；⑨ 外来端口/启动失败时不再叠第二张气泡。补丁02 三档缓存头已在活服务验证（index `no-store`、内容寻址 `immutable`、普通静态 `no-cache`+ETag 且条件请求 304）。 |
 | dsh-launcher（一键启动本体） | 1.1.98 | 0.2.1-rc.2（并保留 0.1.5-rc.1、0.1.1-rc.2、0.1.0-rc.7） | **补丁链适配 DSH 0.2.x 源码树布局**（2026-10-31，用户要求「都适配到现有版本」）：① 目标定位重写——0.2.x 的 profile 不再携带 `@deepseek-ai` 包（bundles 改由源码树提供），引擎原先只认 `~\.dsh\profiles\node_modules`，于是 setup 报「未找到 DSH web profile 的 node_modules」直接跳过。现改为：先试旧 profile 布局，再按 `@deepseek-ai\<包>\<剩余路径>` 到 `<DSH 根>\packages` 下按 package.json 的 `name` 反查包目录（本机扫到 342 个包）；根定位链 `-DshRoot` → `$env:DSH_ROOT` → `%USERPROFILE%\deepseek-harness` → `assets\install-dir.txt` → 托盘 `$dsRoot`；版本改读 `<根>\apps\cli\package.json`。② 修两处实现缺陷：`Split-Path -LiteralPath ... -Parent` 在 PS7 参数集不成立，异常被逐项 catch 吞掉导致包映射恒为空（改用 `[IO.Path]::GetDirectoryName`）；junction 检查里用 `return` 在脚本作用域直接退出整个引擎（改为条件表达式）。③ 补丁02（前端缓存 no-store）按 0.2.1-rc.2 重做：改 `packages\host\frontend-static\src\index.ts` → tsc → tsdown 取真实构建产物做载荷（5938 B，base 保持 0.2.x 的 `./`），源码增量留档 `源码增量-前端缓存no-store-0.2.1-rc.2.patch`，随后 `git checkout` 还原源码保持工作树干净；行为验证 7/7（index no-store / 内容寻址 immutable / 普通资源 no-cache+ETag / 命中 304 / 旧 ETag 仍 200 / 越界 403 / 缺失 404）。④ 档案柜补丁全部废弃：上游 0.2.x 已原生提供 `workspace/archiveSession` + `workspace/unarchiveSession` 与侧边栏功能，`补丁03` 置 `enabled=false` 并注明载荷是 0.1.5-rc.1 构建产物、禁止在 0.2.x 启用（用户 2026-10-31 确认放弃）。⑤ 引擎实际应用验证：备份目录存上游原件（无缓存逻辑）、`lib/index.js` 被换成载荷、`-CheckOnly` 与 setup.ps1 集成均正常。**待推送 GitHub**（本地已 bump `_meta.json` 至 1.1.98） |
 | dsh-launcher（一键启动本体） | 1.1.97 | 0.1.5-rc.1（并保留 0.1.0-rc.7、0.1.1-rc.2） | **修「托盘一显示就退出」+ 新增入口自动提权**（2026-10-31，用户报障）：① 根因：2026-10-26 把 `$notify.ShowBalloonTip(...)`（.NET 方法，括号式正确）换成 PowerShell 函数 `Show-DshNotice(...)` 时没改调用语法——PowerShell 把整张参数表当成**一个 Object[]** 交给第一个参数 `[int]$Timeout`，绑定失败抛终止性错误 → runspace 结束，托盘图标刚出现就消失、dsh web 留在后台。**34 处调用点全部踩中**，第一次弹卡片必死（就绪卡/「已在运行」卡）。修法在 `parts\10-utils.ps1`：第一个参数改收 `[object]`，体内按数组拆回四参并解析成整数 `$tms`（命名式调用仍兼容），气泡回退路径同步改用 `$tms`。② 新增入口提权守卫（`parts\90-main.ps1`，`$CheckOnly` 除外）：非管理员启动时改投「最高权限」计划任务 `DSH-Tray-Elevated` 后立即退出，使所有入口（桌面快捷方式 / 启动DSH-托盘.vbs / .cmd / 启动DSH.bat / 直接 `-File`）最终都落到提权托盘；`-OpenBrowser` 由**未提权 stub** 打开浏览器（避免管理员 Edge 与用户浏览器会话分家）；**任务未登记时照常以当前权限运行，不阻断启动**（新机器需手工登记或后续让 setup.ps1 自动建）。③ 本机配套：计划任务 `DSH-Tray-Elevated`（登录触发 / Highest / Interactive / IgnoreNew / 执行时限无 / 失败重启 3 次），并把 Startup 里的普通权限 `DSH-Tray-Autostart.lnk` 移走备份到 `_bak\`，避免两套自启动互抢。验证：`D:\DSHS` 前台跑 25 s 仍存活、stderr 空、`dsh-tray.log` 写出卡片行；`_tools\probe-elevated.ps1` 读令牌 TokenIsElevation 实测 `DSH-TRAY`/`DSH-WEB`=ELEVATED、`explorer`=NOT-elevated（对照有效性）；**用 Limited 计划任务模拟普通权限入口**：stub 退出码 0、最终托盘 ELEVATED、日志有对应记录；生成物 PARSE-OK、BOM 与 CRLF 保持、模板改动后 `fffd=0`。**待推送 GitHub**（本地已 bump `_meta.json` 至 1.1.97） |
@@ -456,9 +461,7 @@ zip 安装包**集中归档在 `releases\<版本>\` 目录**（历史版本按�
 | 档案柜 v1 补丁 | 0.1.1 | **仅 0.1.1-rc.2** | 载荷绑定版本；清单 `compatibleDsh` 字段校验 |
 
 **兼容性检查规则（防冲突）**：
-- **补丁引擎**：应用每个补丁前，读取清单 `compatibleDsh`，与本机当前 DSH 版本（读
-  profile `@deepseek-ai/dsh/package.json`）比对；**不匹配 → 跳过 + 提醒**（"请先升级
-  DSH 到 X，或将补丁适配到当前版本"），绝不硬装。
+- **补丁引擎**（已退役，2026-11-06）：原规则为「应用每个补丁前按清单 `compatibleDsh` 比对版本，不匹配即跳过、绝不硬装」。引擎与清单已移入 `D:\DSHS\_bak\补丁管理-退役-20261106-174104\`，不再参与任何自动流程。
 - **托盘同步**（右键第三行）：GitHub 上的启动器若声明了 `compatibleDsh` 且本机 DSH
   不在其列 → **提醒先升级 DSH，不更新本地**。
 - **修改适配规则**：技能/补丁适配了新 DSH 版本后，必须同时更新：本表、
@@ -534,3 +537,10 @@ launcher 配套，**最终由用户定义**。AI 只能做预判断（一键启�
 - `switch-dsh-home3.ps1` + `run-switch3.ps1`：切换 DSH 家目录（改 `dsh-home.txt`，托盘 `Start-DshServer` 读取）。必须用 `run-switch3.ps1 -NewHome <路径> -Now` 经计划任务执行，否则脚本会自检拒绝（避免像 v1 那样把自己杀掉）。
 - `test-frontend-cache.mjs`：验前端三档缓存头（index `no-store`、内容寻址 `immutable`、普通静态 `no-cache`+ETag+304）。
 - `test-model-menu-plugin.mjs`：验 client 插件注册格式（`window.__ModuleLoader__.load`）。
+
+### dsh-home.txt 约定（2026-11-02）
+
+- 文件放在安装目录（如 `D:\DSHS\dsh-home.txt`），内容为**单行纯 ASCII 绝对路径**，无 BOM、无引号、无尾随空格。
+- 读者：托盘 `Start-DshServer`、`dsh.cmd`、`DSH-rescue.ps1`、备份引擎、会话索引任务。
+- 差异提示：托盘与备份用 `Trim()` 去首尾空白；`dsh.cmd` 用 `for /f` **不去尾随空格**。手工编辑该文件时别留空格，否则只有命令行那条链会带上空格。
+- 备份引擎的解析顺序：`dsh-home.txt` → `~\.dsh`（`$env:DSH_HOME` 分支已删除，因为计划任务环境里不存在该变量）。

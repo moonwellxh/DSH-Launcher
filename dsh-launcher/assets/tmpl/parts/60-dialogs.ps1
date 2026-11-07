@@ -53,7 +53,26 @@ function Show-UpgradeDialog {
     $cmbModel = New-Object System.Windows.Forms.ComboBox
     $cmbModel.DropDownStyle = 'DropDownList'; $cmbModel.Width = 280
     $modelMap = @{}
-    foreach ($c in $catalog) { $modelMap[[string]$c.name] = $c; [void]$cmbModel.Items.Add([string]$c.name) }
+    $nameCount = @{}
+    foreach ($c in $catalog) { $nm0 = [string]$c.name; if ($nameCount.ContainsKey($nm0)) { $nameCount[$nm0]++ } else { $nameCount[$nm0] = 1 } }
+    $seq = 0
+    foreach ($c in $catalog) {
+        $seq++
+        $label = [string]$c.name
+        if ($nameCount[$label] -gt 1) {
+            # 2026-11-07：同名模型来自不同通道时加后缀，避免两行一模一样；键用标签，避免同名覆盖
+            $pn = [string]$c.provider
+            switch ($pn) {
+                'deepseek-official' { $pn = 'API Key' }
+                'deepseek-account'  { $pn = '账号' }
+                default { }
+            }
+            $label = $label + '（' + $pn + '）'
+        }
+        if ($modelMap.ContainsKey($label)) { $label = $label + ' #' + $seq }
+        $modelMap[$label] = $c
+        [void]$cmbModel.Items.Add($label)
+    }
     $rowM.Controls.AddRange(@($lblM, $cmbModel))
     $panel.Controls.Add($rowM)
     $rowE = New-Object System.Windows.Forms.FlowLayoutPanel

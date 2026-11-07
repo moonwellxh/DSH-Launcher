@@ -147,9 +147,19 @@ $form.Add_Paint({
 })
 
 $img = $null
+$imgStream = $null
 foreach ($n in @('whale-white.png', 'whale.png')) {
     $p = Join-Path $InstallDir $n
-    if (Test-Path -LiteralPath $p) { try { $img = [System.Drawing.Image]::FromFile($p) } catch { $img = $null } ; if ($img) { break } }
+    if (Test-Path -LiteralPath $p) {
+        # 2026-11-07：原用 Image::FromFile，会独占文件句柄；硬重启时 setup 覆盖同一 PNG
+        # 被判"正由另一进程使用"而中断（实测导致 setup 在 L354 之后全部不执行）。
+        # 改为"共享读 -> 拷进 MemoryStream -> FromStream"，句柄立即释放。
+        try {
+            $fs = [System.IO.FileStream]::new($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            try { $imgStream = New-Object System.IO.MemoryStream; $fs.CopyTo($imgStream); $imgStream.Position = 0; $img = [System.Drawing.Image]::FromStream($imgStream) } finally { $fs.Dispose() }
+        } catch { try { if ($imgStream) { $imgStream.Dispose() } } catch {}; $img = $null; $imgStream = $null }
+        if ($img) { break }
+    }
 }
 if ($img) {
     $pb = New-Object System.Windows.Forms.PictureBox
@@ -188,6 +198,7 @@ $timer.Start()
 [void]$form.Show()
 [System.Windows.Forms.Application]::Run($form)
 if ($img) { $img.Dispose() }
+if ($imgStream) { $imgStream.Dispose() }
 $timer.Dispose()
 $form.Dispose()
 $pidLeft = $null

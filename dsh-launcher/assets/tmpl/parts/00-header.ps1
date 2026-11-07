@@ -8,6 +8,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $webUrl  = 'http://127.0.0.1:3080'
+$saUrl   = 'http://127.0.0.1:3082'
+$saLogDir = Join-Path $PSScriptRoot 'dsh-superagent\.artifacts'
 $port    = 3080
 __MODE_NODE_VARS__$logOut  = Join-Path $PSScriptRoot 'dsh-web.log'
 $logErr  = Join-Path $PSScriptRoot 'dsh-web.err.log'

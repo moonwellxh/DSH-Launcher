@@ -1,0 +1,113 @@
+diff --git a/packages/host/frontend-static/src/index.ts b/packages/host/frontend-static/src/index.ts
+index e497efd228..83f4a952fd 100644
+--- a/packages/host/frontend-static/src/index.ts
++++ b/packages/host/frontend-static/src/index.ts
+@@ -13,8 +13,8 @@
+  */
+ 
+ import type { ServerResponse } from 'node:http'
+-import { readFile } from 'node:fs/promises'
+-import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
++import { readFile, stat } from 'node:fs/promises'
++import { basename, dirname, extname, join, normalize, resolve, sep } from 'node:path'
+ import type { Context } from '@deepseek-ai/cordis'
+ import z from '@deepseek-ai/schemastery'
+ import type {} from '@deepseek-ai/dsh-client-connection'
+@@ -38,6 +38,32 @@ export const Config: z<Config> = z.object({
+ 
+ const HTML_MIME = 'text/html; charset=utf-8'
+ 
++/**
++ * The rendered document embeds the boot graph composed by the running host, so
++ * reusing a stored copy after a restart, an upgrade, or a rebuild pairs that
++ * document with client artifacts it was not rendered for. It is also small and
++ * generated per request. Never let a browser reuse it.
++ */
++const INDEX_CACHE = 'no-store'
++
++/**
++ * Bundler output names carry a content hash, so a given name can only ever
++ * describe one byte sequence: a stored copy can never be stale.
++ */
++const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable'
++
++/**
++ * Everything else (favicon, web manifest, any unhashed file) keeps its stored
++ * copy but must revalidate, which the validator below answers with a 304.
++ */
++const REVALIDATE_CACHE = 'no-cache'
++
++/**
++ * Vite's `[name]-[hash][extname]` output convention. Only names matching it
++ * may claim immutability.
++ */
++const CONTENT_ADDRESSED_NAME = /-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/u
++
+ const MIME: Record<string, string> = {
+   '.html': HTML_MIME,
+   '.js': 'text/javascript; charset=utf-8',
+@@ -67,11 +93,14 @@ const STATIC_MISS_CODES: ReadonlySet<string | undefined> = new Set([
+  * @param authorizeIndex - authenticates an index response before its bytes are read.
+  * @param renderIndex - produces the index.html body (structured injection
+  * rendering) for the dist root and configured index path.
++ * @param ifNoneMatch - the request's `if-none-match` header, compared against
++ * the validator a stored file response carries.
+  */
+ export async function serveStatic(
+   pathname: string, res: ServerResponse, distRoot: string, distIndex: string,
+   authorizeIndex: () => boolean,
+   renderIndex: () => Promise<string>,
++  ifNoneMatch?: string,
+ ): Promise<void> {
+   const target = resolve(normalize(join(distRoot, pathname)))
+   // Traversal rejection: the target must be distRoot itself (`/`) or stay under
+@@ -84,14 +113,19 @@ export async function serveStatic(
+   }
+   let body: string | Buffer
+   let type: string
++  let isIndex = false
++  let etag: string | undefined
+   try {
+     if (target === distRoot || target === distIndex) {
+       if (!authorizeIndex()) return
+       body = await renderIndex()
+       type = HTML_MIME
++      isIndex = true
+     } else {
++      const info = await stat(target)
+       body = await readFile(target)
+       type = MIME[extname(target)] ?? 'application/octet-stream'
++      etag = `W/"${String(info.size)}-${String(Math.trunc(info.mtimeMs))}"`
+     }
+   } catch (error) {
+     // Only absent or non-file targets are 404; other filesystem failures reach
+@@ -101,7 +135,20 @@ export async function serveStatic(
+     res.end()
+     return
+   }
+-  res.writeHead(200, { 'content-type': type })
++  if (isIndex) {
++    res.writeHead(200, { 'content-type': type, 'cache-control': INDEX_CACHE })
++    res.end(body)
++    return
++  }
++  const cacheControl = CONTENT_ADDRESSED_NAME.test(basename(target)) ? IMMUTABLE_CACHE : REVALIDATE_CACHE
++  const headers: Record<string, string> = { 'content-type': type, 'cache-control': cacheControl }
++  if (etag !== undefined) headers.etag = etag
++  if (etag !== undefined && ifNoneMatch === etag) {
++    res.writeHead(304, headers)
++    res.end()
++    return
++  }
++  res.writeHead(200, headers)
+   res.end(body)
+ }
+ 
+@@ -135,6 +182,7 @@ export function apply(ctx: Context, config: Config): void {
+       distIndex,
+       () => ctx.connection.authorizeIndex(req, res),
+       renderIndex,
++      req.headers['if-none-match'],
+     )
+   }), 'frontend-static: fallback seat')
+ }

@@ -233,7 +233,11 @@ $shellTimer.Start()
 $script:webDownCount = 0
 $script:webRestartCount = 0
 $script:webWatchdogDisabled = $false
-$script:lastWebStart = [datetime]::MinValue
+if ($null -eq $script:lastWebStart) { $script:lastWebStart = [datetime]::MinValue }
+$script:webUnhealthyNoted = $false
+$script:webUpSince = $null
+$script:webUpPid = 0
+$script:webStartLoggedPid = 0
 
 # ---- 自动修复（2026-09-05，多机分发）：连续自动重启仍失败时，先重跑一次 setup.ps1 ----
 # （node 被升级/迁移/卸载后，托盘内写死的路径会失效；重跑 setup 会重新探测并重渲染托盘）
@@ -303,13 +307,37 @@ $webTimer.Add_Tick({
     try {
         $listener = Get-DshListenerPid
         if ($listener -eq 0) {
+            # 2026-11-07（S1 修复）：本 tick 观测到无监听即清"在岗"起点——否则下方 G1 的 return
+            # 会跳过后面的清空，旧 T0 使新实例 bind 一秒就被当成"在岗满 10 分钟"而清零重启计数。
+            $script:webUpSince = $null
+            # 2026-11-07（三改）：回到纯年龄窗口。信号方案被双轨审查推翻——CPU 信号采的是
+            # cmd 包装进程（不含 node 子进程，两路实测增量均 0.0ms），日志启动早期不写，
+            # 四元组全程静止，冷启动会在 ~75 秒被误杀（比旧 120 秒更早）。
+            # 纯年龄 600 秒：10 分钟内的启动一律不打断；卡死检测最长 10 分钟
+            # （与此前已接受的硬上限一致），熔断计数照常兜底。
+            if ($null -ne $script:proc) {
+                try { $script:proc.Refresh() } catch {}
+                if (-not $script:proc.HasExited) {
+                    $ageSec = 999999
+                    try { $ageSec = [int]((Get-Date) - $script:proc.StartTime).TotalSeconds } catch {}
+                    if ($ageSec -lt 600) {
+                        # 2026-11-07（M3 复审）：启动期首次 return 留 INFO，让"没被误杀"成为可证事实，
+                        # 而不是靠"日志里没有失败事件"推断。每个进程只记一次。
+                        if ($script:webStartLoggedPid -ne $script:proc.Id) {
+                            $script:webStartLoggedPid = $script:proc.Id
+                            try { [void](Write-DshTrayLog -Level 'INFO' -Event 'watchdog.start_hold' -Fields @{ pid = $script:proc.Id; age_sec = $ageSec; window_sec = 600 }) } catch {}
+                        }
+                        return
+                    }
+                }
+            }
             # 已禁用（连续失败）：仍记录，但不再自动重启/自愈（等待用户手动救活或恢复检测）
             if ($script:webWatchdogDisabled) { return }
+            $script:webUpSince = $null
             $script:webDownCount++
             if ($script:webDownCount -ge 3 -and ((Get-Date) - $script:lastWebStart).TotalSeconds -gt 30) {
                 $script:webDownCount = 0
                 $script:lastWebStart = Get-Date
-                $script:webRestartCount++
                 if ($script:webRestartCount -ge 3) {
                     # 自动修复优先（多机分发）：连续失败多为 node/DSH 路径失效，先重跑一次 setup.ps1 自愈
                     if (Test-AutoRepairDue) {
@@ -339,18 +367,42 @@ $webTimer.Add_Tick({
                     Show-DshNotice(6000, 'DSH', 'DSH Web 反复启动失败（自动修复后仍未恢复，可能 DSH 版本过旧或 Node.js 未安装）。已停止自动重启。请升级 DSH，或用托盘「硬重启托盘」重新探测后手动启动。', 'Warning')
                     return
                 }
-                Show-DshNotice(3000, 'DSH', 'DSH Web 已停止，正在自动重启…', 'Info')
+
                 # 防挂死进程累积：重启前清理上一 proc（已自然退出则跳过）
                 if ($null -ne $script:proc) {
                     try { $script:proc.Refresh() } catch {}
-                    if (-not $script:proc.HasExited) { Stop-Process -Id $script:proc.Id -Force -ErrorAction SilentlyContinue }
+                    if (-not $script:proc.HasExited) {
+                        $killPid = $script:proc.Id
+                        try { & taskkill /PID $killPid /T /F 2>$null | Out-Null } catch {}
+                        # 等端口真正释放（最多 3 秒），而不是盲等 300ms
+                        $freed = $false
+                        for ($k = 0; $k -lt 12; $k++) {
+                            Start-Sleep -Milliseconds 250
+                            if ((Get-DshListenerPid) -eq 0) { $freed = $true; break }
+                        }
+                        try { $script:proc.Refresh() } catch {}
+                        if (-not $script:proc.HasExited) { try { Stop-Process -Id $script:proc.Id -Force -ErrorAction SilentlyContinue } catch {} }
+                        if (-not $freed) {
+                            try { [void](Write-DshTrayLog -Level 'WARN' -Event 'watchdog.kill_unreleased' -Fields @{ pid = $killPid; port = '3080' }) } catch {}
+                        }
+                    }
                     $script:proc = $null
                 }
+                # 2026-11-07：紧贴 spawn 前复核端口。cmd 先死、node 仍在绑端口时 HasExited 为真，
+                # G1 不成立，会再起一个 → EADDRINUSE。命中时留痕且不计入重启次数。
+                if ((Get-DshListenerPid) -ne 0) {
+                    try { [void](Write-DshTrayLog -Level 'WARN' -Event 'watchdog.spawn_skipped' -Fields @{ port = '3080'; reason = 'late_binder' }) } catch {}
+                    return
+                }
+                Show-DshNotice(3000, 'DSH', 'DSH Web 已停止，正在自动重启…', 'Info')
                 try { $script:proc = Start-DshServer }
                 catch {
                     try { [void](Write-DshTrayLog -Level 'ERROR' -Event 'server.start_throw_watchdog' -Fields @{ error = $_.Exception.Message }) } catch {}
                     $script:proc = $null
                 }
+                # 2026-11-07：记"尝试过 spawn"必须在判 null 之前——否则抛异常时计数不涨，熔断永不触发（无限循环）。
+                # 守卫已在上方 return，故不会重新产生幻影计数。
+                $script:webRestartCount++
                 if ($null -eq $script:proc) {
                     Show-DshNotice(4000, 'DSH', '__MODE_WEB_WATCHDOG_FAIL__', 'Error')
                 } else {
@@ -360,18 +412,40 @@ $webTimer.Add_Tick({
                 }
             }
         } else {
+            # 2026-11-07：恢复前先验健康。孤儿 node / 外来进程占着 3080 时不能当"已恢复"，
+            # 否则看护会清零计数并永久静默。只在异常路径探测（正常态零开销）。
+            if ($script:webDownCount -ge 1 -or $script:webWatchdogDisabled) {
+                $healthy = $false
+                try { $healthy = Test-DshReady } catch { $healthy = $false }
+                if (-not $healthy) {
+                    if (-not $script:webUnhealthyNoted) {
+                        $script:webUnhealthyNoted = $true
+                        try { [void](Write-DshTrayLog -Level 'WARN' -Event 'watchdog.unhealthy_listener' -Fields @{ pid = $listener; port = '3080' }) } catch {}
+                    }
+                    $script:webUpSince = $null
+                    return
+                }
+                $script:webUnhealthyNoted = $false
+            }
             if ($script:webDownCount -ge 3) {
                 Show-DshNotice(2000, 'DSH', "DSH Web 已恢复（PID $listener）。", 'Info')
             }
             $script:webDownCount = 0
-            $script:webRestartCount = 0
+            # 2026-11-07：恢复判据从"看见端口"改为"在岗满 10 分钟"，否则 flap（bind 后即崩）下计数永不累积。
+            # 2026-11-07（M1 复审）：记住"在岗那个 PID"。外部进程在同一个 5 秒 tick 内接替监听时，
+            # 入口的 webUpSince 清空来不及生效，会沿用旧 T0；PID 变了即视为新实例，重新起算。
+            if ($script:webUpPid -ne $listener) { $script:webUpSince = $null; $script:webUpPid = $listener }
+            if ($null -eq $script:webUpSince) { $script:webUpSince = Get-Date }
+            elseif (((Get-Date) - $script:webUpSince).TotalMinutes -ge 10) { $script:webRestartCount = 0 }
             # 服务恢复 → 重新武装看护（之前连续失败被禁用时，用户手动/升级救活后应能继续自动守护）
             if ($script:webWatchdogDisabled) {
                 $script:webWatchdogDisabled = $false
                 Show-DshNotice(2000, 'DSH', 'DSH Web 已恢复，看护已重新武装。', 'Info')
             }
         }
-    } catch {}
+    } catch {
+        try { [void](Write-DshTrayLog -Level 'WARN' -Event 'watchdog.tick_error' -Fields @{ error = $_.Exception.Message }) } catch {}
+    }
 })
 $webTimer.Start()
 
@@ -631,6 +705,7 @@ $script:miCbCn.Add_Click({
 $menu.Add_Opening({ Update-CodeBuddyGatewayMenu })
 $menu.Items.Add('-') | Out-Null
 $miOpen  = $menu.Items.Add('打开 Web UI')
+$miSuper = $menu.Items.Add('打开 superagent 面板 (3082)')
 $miTui   = $menu.Items.Add('终端界面 (TUI)')
 $miHead  = $menu.Items.Add('无界面模式 (Headless)')
 $miDocs  = $menu.Items.Add('DS 开放平台')
@@ -639,6 +714,15 @@ $miRestart = $menu.Items.Add('硬重启托盘')
 $miExit  = $menu.Items.Add('退出并停止 DSH')
 $miCur.Add_Click({ try { Open-Url 'https://deepseekdocs.com/' } catch { Show-DshNotice(3000, 'DSH', "打开文档失败：$($_.Exception.Message)", 'Error') } })
 $miOpen.Add_Click({ try { Open-Url $webUrl } catch { Show-DshNotice(3000, 'DSH', "打开 Web UI 失败：$($_.Exception.Message)", 'Error') } })
+$miSuper.Add_Click({
+    try {
+        $listen = Get-NetTCPConnection -LocalPort 3082 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $listen) { Show-DshNotice(4000, 'dsh-superagent', '面板未启动：端口 3082 无监听', 'Warning'); return }
+        $u = Get-SuperagentUrl
+        if (-not $u) { Show-DshNotice(4000, 'dsh-superagent', '读不到启动令牌，检查 .artifacts 日志是否可读', 'Warning'); return }
+        Open-Url $u
+    } catch { Show-DshNotice(3000, 'dsh-superagent', "打开面板失败：$($_.Exception.Message)", 'Error') }
+})
 $miDocs.Add_Click({ try { Open-Url 'https://platform.deepseek.com/' } catch { Show-DshNotice(3000, 'DSH', "打开开放平台失败：$($_.Exception.Message)", 'Error') } })
 
 $miTui.Add_Click({ try { if (Test-Path -LiteralPath $launchBat) { Start-Process -FilePath $launchBat -ArgumentList '2' } else { Open-Url $webUrl } } catch { Show-DshNotice(3000, 'DSH', "打开 TUI 失败：$($_.Exception.Message)", 'Error') } })
@@ -711,17 +795,18 @@ $verCheckTimer.Add_Tick({
             $miGit.Text = "魔偶Git版本 $ghVer（单击双向同步）"
         } elseif ($ghVer) {
             $script:gitMode = $false
+            # 2026-11-07：无 token 时在行文字里直接指路（连点第三项 5 次可填 token）
             if (Test-NewerVersion $lv $ghVer) {
                 $script:pendingUpdate = $true
-                $miGit.Text = "魔偶最新版本 $ghVer（待更新）"
+                $miGit.Text = "魔偶最新版本 $ghVer（待更新；无 token，连点第三项 5 次填写）"
             } else {
                 $script:pendingUpdate = $false
-                $miGit.Text = "魔偶最新版本 $ghVer（无需更新）"
+                $miGit.Text = "魔偶最新版本 $ghVer（无 token，连点第三项 5 次填写）"
             }
         } else {
             $script:gitMode = $false
             $script:pendingUpdate = $false
-            $miGit.Text = '魔偶最新版本 无法检测'
+            $miGit.Text = '魔偶Git未配 token（连点第三项 5 次填写）'
         }
     } catch {}
 })
@@ -770,6 +855,10 @@ $miGit.Add_Click({
                 Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',('"' + $syncScript + '"'),'-Mode','__MODE_SYNC_MODE__','-InstallDir',('"' + $PSScriptRoot + '"'),'-Direction','auto' -WindowStyle Hidden
             }
         } else {
+            # 2026-11-07：无 token 时点击不该静默——直接指路到 token 配置入口
+            if (-not $ghToken) {
+                Show-DshNotice(5000, 'DSH', '未配置 GitHub token：连点第三项「DSH魔偶助手」5 次即可填写', 'Warning')
+            }
             # 无需更新：状态刷新（查询中…，显示时间 ≥1s）
             $miGit.Text = '魔偶最新版本 查询中…'
             $miGit.Enabled = $false

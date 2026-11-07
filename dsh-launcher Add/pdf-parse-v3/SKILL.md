@@ -32,9 +32,9 @@ python tests\v4\test_ms1_smoke.py && python tests\v4\test_ms2_replay.py && pytho
 powershell -File assets\check-env.ps1          # 只检查
 powershell -File assets\check-env.ps1 -Install  # 检查并自动补装缺失包
 ```
-探测：DSH 专用 Python（`~/.dsh/runtime\python*`）→ 依次验证/安装
+探测：DSH 专用 Python（`$DSH_HOME/runtime\python*`）→ 依次验证/安装
 `pypdf` `rapidocr_onnxruntime` `pymupdf` `pdfplumber`（清华镜像，失败回退默认源）→
-PowerShell 5.1 与 zh-Hans OCR 语言包 → curl。缺 `~/.dsh/runtime` 的 Python 时给出指引
+PowerShell 5.1 与 zh-Hans OCR 语言包 → curl。缺 `$DSH_HOME/runtime` 的 Python 时给出指引
 （装 3.12 到该目录或设 `$env:DSH_PYTHON`）。输出 `[OK]/[MISS]/[WARN]` + `RESULT ok/warn/fail`。
 
 ## 1) 分诊（先测后读）
@@ -67,7 +67,7 @@ python assets\finalize_v3.py out_v3.json report.json   # A3/A6 质检 + 抽样�
 - **GLM-OCR 出域通道：有界并发**——API 端不受本机 CPU 约束，串行纯属无谓瓶颈；用 `--concurrency N`（默认 6，`N=1` 回退串行）——它是**页级调度并发度**，主路径与 `--page-image` 兼容模式都受其管辖（出域与本地渲染并行；本地 RapidOCR 由引擎锁串行、PDF 后端由 `render.PDF_BACKEND_LOCK` 串行）；429/5xx 指数退避、`Retry-After` 优先；并发下台账/预算/缓存/registry 与本地兜底产物 `work/ocr/ocr_pages.json` 均加锁。**按引擎分治**：页级并发只作用于出域与渲染，本地 RapidOCR 仍是单实例 + 调用串行。
 - **本地 OCR 不参与双源**：v4 主路径扫描页以 GLM 整页解析为唯一内容源；RapidOCR 仅在无 key／`--no-egress`／视觉不可用时作 FR-D7 本地兜底（默认不跑、不作交叉校验信号）。历史文档「本地 OCR 校验通道默认开启」已作废。**GLM 主路径不消费本地行盒产物**（该产物只按页号索引、无文档标识，跨文档或复跑会串页）。
 - OCR 老扫描件章题偶有错字（页码可信、文字按页回查）；表格单元数据不回造，原文在 text。
-- 新机器依赖：直接 `powershell -File assets\check-env.ps1 -Install`（自动装 pypdf/rapidocr_onnxruntime/pymupdf/pdfplumber）；缺 `~/.dsh/runtime` Python 时按提示安装或设 `$env:DSH_PYTHON`。
+- 新机器依赖：直接 `powershell -File assets\check-env.ps1 -Install`（自动装 pypdf/rapidocr_onnxruntime/pymupdf/pdfplumber）；缺 `$DSH_HOME/runtime` Python 时按提示安装或设 `$env:DSH_PYTHON`。
 
 ## 5) 与其他技能协作
 - 查标准状态/编号 → **`std-official-search`**；其 openstd 图档页图下载后可用本技能 render/OCR 解析。

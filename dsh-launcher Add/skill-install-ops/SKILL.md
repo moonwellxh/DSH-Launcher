@@ -153,8 +153,8 @@ version: 1.1.13
    ② 先确认文件**存在**再比（对比不存在文件会把"缺失"误报成"内容不同"）。
 2. **托盘「一键同步」方向陷阱**：同步方向判定为**拉取**时会**覆盖本地镜像内未推送的提交/文件**，
    且可能把工作树 reset 掉 → 改完配套/源树**先 commit+push，再跑同步**；本地权威副本始终以
-   `~\.agents\skills\<技能>\` 为准，镜像（`~\.dsh\gh-sync\DSH-Launcher`）只是仓库工作副本。
-3. **git push 凭据**：Bearer 头会被 GitHub 拒；用 `~\.dsh\gh-sync\config.json` 里的 token，
+   `~\.agents\skills\<技能>\` 为准，镜像（`$DSH_HOME\gh-sync\DSH-Launcher`）只是仓库工作副本。
+3. **git push 凭据**：Bearer 头会被 GitHub 拒；用 `$DSH_HOME\gh-sync\config.json` 里的 token，
    **Basic 认证**可推：`[Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$tok"))` +
    `git -c "http.extraheader=Authorization: Basic <b64>" push`；token 仅内存使用不落盘不打印；
    先 `Test-NetConnection 127.0.0.1 -Port 7897`（代理开）再推，代理关时用 `-c http.proxy= https.proxy=` 直连尝试。
@@ -168,7 +168,7 @@ version: 1.1.13
    自写重打若漏掉这套过滤，会把构建垃圾打进发布包（实测：朴素重打包得 **98 条目**，按规则过滤后 **71 条目**，差 **27 条**全是 `_backup/` 与 `install-dir.txt`；同轮已提交发布版为 70 条、差 1 条即上一批新增的配套包）。
    **可失败判据（本机可执行，实测通过）**——比较「新包（工作副本）」与「已提交发布版（git HEAD）」：
    ```powershell
-   $mirror="$env:USERPROFILE\.dsh\gh-sync\DSH-Launcher"; $ver='v1.1.92'
+   $mirror="$DSH_HOME\gh-sync\DSH-Launcher"; $ver='v1.1.92'
    $rel="$mirror\releases\$ver"; $main="$rel\dsh-launcher`__skillhub.zip"
    New-Item -ItemType Directory -Force "$env:TEMP\cmp" | Out-Null
    # 关键：用 cmd 重定向拿字节流。PowerShell 的 > 是文本重定向，会写出「git version …」而不是 zip（实测 29 B 文本）
@@ -225,7 +225,7 @@ version: 1.1.13
     **规则**：① 自哈希不入自身文件（由外部变更记录或命令现取承载）；② 若必须引用会被自己改写的文件，改写**只记字节数与存在性**、不记哈希；
     ③ **可失败判据**：同一生成器**连跑两次，产物字节必须完全相同**（否则判定存在自指循环）。
 
-9. **受管凭据文件格式（2026-09-05 事故）**：`~/.dsh/.credentials.yaml` 顶层**只允许 `version` 与 `refs`**；密钥必须写在 `refs:` 区块下（缩进两空格），如：
+9. **受管凭据文件格式（2026-09-05 事故）**：`$DSH_HOME/.credentials.yaml` 顶层**只允许 `version` 与 `refs`**；密钥必须写在 `refs:` 区块下（缩进两空格），如：
 ```yaml
 version: 1
 refs:
@@ -243,18 +243,26 @@ refs:
      ① `node ...\bin.js plugin --profile web list` 有 `@anysearch/anysearch-dsh`；
      ② `node ...\bin.js --profile web --dump-config` 出现 `searchProvider: anysearch`、`fetchProvider: anysearch`、`web-search-anysearch` 条目（只回显凭据引用名，不回显 key）；
      ③ 重启 web：`powershell -File D:\DSHS\restart-web.ps1`（杀 tray+node web 再拉起，等 3080 返回 200）；
-     ④ 冒烟：用插件自带 Client（`~/.dsh/profiles/web/node_modules/@anysearch/anysearch-dsh/lib/client.js`，方法名 `search/extract/listDomains/getSubDomains`，**没有 capabilities()**）带 `~/.dsh/.credentials.yaml` refs 里的 key 实测 search + listDomains。
+     ④ 冒烟：用插件自带 Client（`$DSH_HOME/profiles/web/node_modules/@anysearch/anysearch-dsh/lib/client.js`，方法名 `search/extract/listDomains/getSubDomains`，**没有 capabilities()**）带 `$DSH_HOME/.credentials.yaml` refs 里的 key 实测 search + listDomains。
    - **web-app surface 架构坑：host 层 `tool-web` 的 `disabled: true` + `fetch: false` 是 dsh-web-app bundle 有意设计**——agent 工具按会话由 agent preset 挂载（`apps/cli/config/agent-presets/*/agent.cordis.yml` 各自有 tool-web 行）。**不要**在 profile 的 `cordis.patch.yml` 开 host tool-web 的 fetch（本已 disabled，改了也是惰性配置）；插件自己在 web_fetch 缺失时会补注册（`applyWebFetchTool`）。插件安装文档里"确认 tool-web fetch: true"一步只适用于无 preset 架构的旧预览版。
-   - 插件包安装位置：`~/.dsh/profiles/web/`（package.json dependencies + dsh.profile.bundles + pnpm-lock + node_modules）。
+   - 插件包安装位置：`$DSH_HOME/profiles/web/`（package.json dependencies + dsh.profile.bundles + pnpm-lock + node_modules）。
    - **端到端实测法（最强验证）**：DSH web 的 api-gateway 支持匿名 RPC（托盘同款）——`POST http://127.0.0.1:3080/api/<method>`，body `{"type":"client-request","rpcId":"...","method":"...","payload":{}}`。可用方法见 `apps/cli/.../api/rpc-map.ts`：`session.create` → `session.models`（新会话默认继承 agent-default-model，**不用 selectModel**）→ `session.prompt {sessionId, mode:'queue', content:[{type:'text',text}]}` → 轮询 `session.history {sessionId}`。历史事件里 `tool/call` 的 `data.name` 是真实工具调用名（比 blob 匹配可靠，目录schema也会产生字符串命中）；`turn/end` 表示回合收尾。脚本样例：任务工作区 `anysearch-e2e.mjs`（2026-09-06 审查时 2 次 tool/call 实证 anysearch_capabilities+web_search）。
    - **卸载（2026-09-06 实测）**：`node ...\bin.js plugin --profile web remove @anysearch/anysearch-dsh`——dependencies 与 bundles 自动移除，`--dump-config` 的 `searchProvider` 自动回退 `deepseek-official`，anysearch 命中归 0。注意：pnpm remove 会留下**空的** `node_modules/@anysearch` scope 目录，手动 `rm -rf` 清掉。凭据 key 留在 credentials.yaml 不动（插件没了不读取，重装直接可用）。卸载后同样要 `restart-web.ps1` 重启生效。
 11. **dsh-thinking-effort（@hytime/dsh-thinking-effort@0.3.3）DSH 插件安装实战（2026-09-24 实测）**：
    - **同名包辨析（先问清再装）**：纯名 `dsh-thinking-effort` npm 404；实际有 3 个同名/近名候选——`@hytime/dsh-thinking-effort`（最新、对应官方 Discussion #1817，用户选定）、`@chengwd96/dsh-thinking-effort`（近名、可视化配置）、GitHub `DreamRift/dsh-thinking-efforts`（复数、未发 npm）。`npm search thinking-effort` 找候选，**多候选必须先问清，不得自行选定**。
    - 装：`node C:\Users\雍远\deepseek-harness\apps\cli\lib\bin.js plugin --profile web add "@hytime/dsh-thinking-effort@0.3.3"`。**pnpm 元数据缓存旧会把不带版本的 add 解析到旧版**（本次解析 0.3.1 而非 latest 0.3.3），显式 `@<version>` 钉住；刚发布未达 `minimumReleaseAge` 的版本会被供应链策略拦下，CLI 自动写入 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`，属正常放行记录而非错误。
    - 重启脚本坑：`restart-web.ps1` 内 `Start-Process` 全路径 powershell.exe 报「系统找不到指定的文件」（路径 Test-Path 却为真，原因未明）→ 外层改 `cmd /c start /b powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\DSHS\restart-web.ps1` 分离启动；**分离启动还保住当前回合不被「杀 web」中断**（脚本第 8 行强杀 `bin.js web` = 承载会话的进程，前台跑会丢交付）。脚本轮询只认 3080 返 200，**现匿名访问返回 401 会误判 TIMEOUT**——判断服务活着以「web 进程存活 + HTTP 有响应（401 也算）+ 会话可用」三证为准。
-   - **宿主加载 marker 路径坑（官方 INSTALL 文档与本机不符）**：marker = `join(process.env.DSH_HOME || cwd, "thinking-effort-loaded.json")`；tray 拉起的 web 进程**不带 DSH_HOME**，marker 实际落在 web 进程 cwd（`C:\Users\雍远\deepseek-harness\thinking-effort-loaded.json`）而非文档写的 `~/.dsh/`。验证时两处都找；`event: filled-N` 且 `pid` 对齐活 web 进程 = Host 已 apply 并自动补齐 N 个模型档位（最强证据）。
+   - **宿主加载 marker 路径坑（官方 INSTALL 文档与本机不符）**：marker = `join(process.env.DSH_HOME || cwd, "thinking-effort-loaded.json")`；tray 拉起的 web 进程**不带 DSH_HOME**，marker 实际落在 web 进程 cwd（`C:\Users\雍远\deepseek-harness\thinking-effort-loaded.json`）而非文档写的 `$DSH_HOME/`。验证时两处都找；`event: filled-N` 且 `pid` 对齐活 web 进程 = Host 已 apply 并自动补齐 N 个模型档位（最强证据）。
    - 四层验证（本插件官方口径 INSTALL.zh.md §4）：① 导入 `node -e "require('C:/Users/雍远/.dsh/profiles/web/node_modules/@hytime/dsh-thinking-effort/lib/index.js')"`（ESM，Node≥22 的 require(esm) 可载，期望 keys 含 `apply`）；② `plugin --profile web list` 有依赖 + `--dump-default-config`（**官方命令名，与 --dump-config 不同**）出现 `- id: thinking-effort` 且无独立旧名 `dsh-thinking-effort` 条目；③ 宿主 marker 见上；④ 浏览器侧匿名 curl 3080 被 401 挡、拿不到页面清单 → 改为让用户在已登录浏览器刷新目视设置页「模型能力与档位」（发布包不附带测试文件，第 3 层自带测试按此跳过）。
    - 卸载（官方 INSTALL §7）：`node ...\bin.js plugin --profile web remove @hytime/dsh-thinking-effort` + 删 marker + 重启 web。
+
+12. **改「已装副本」≠ 改「分发包」（2026-11-07 实测教训，配套技能必改）**：修好 `~\.agents\skills\<slug>\` 里的文件后，
+    `dsh-launcher\assets\配套技能\<slug>__skillhub.zip` **仍是旧内容**，而两边 `_meta.version` 相同 →
+    setup 的覆盖条件是「zip 版本 > 已装版本」，于是判跳过：本机看似无事，**换机/重装解压 zip 时修复静默丢失**。
+    **唯一安全顺序**：① 用已装目录重建 zip（只替换改动文件，其余条目逐字节沿用旧包，条目集合不变）→
+    ② **然后**再把 zip 内与已装 `_meta` 的 `version` 同时提高（两边同一版本号）→ ③ 校验「zip 内目标文件 SHA256 == 已装」。
+    **顺序颠倒即事故**：先提版本后打包，setup 会判「zip 更新」并用旧内容覆盖新修复。
+    可执行判据：`[IO.Compression.ZipFile]::OpenRead(zip)` 取目标条目算 SHA256 与已装比；再比两边 `_meta.version` 相等。
 
 ## 版本历史
 
@@ -262,7 +270,7 @@ refs:
 |------|------|------|
 | 1.1.13 | 2026-10-13 | 补 frontmatter `version`（此前仅 `_meta.json` 有版本，本地无从读取）；「二.3」补打包前必过滤 `_backup/`/`*.bak-*`/`__pycache__`/`install-dir.txt`/`var/`（实测分发包内混入两个 `.bak`）；「七.4」补主包重打只能用官方 `Is-SyncIgnored` 规则＋以已提交发布版为基线的三条可失败判据＋禁止自比较；新增「七.10 先冻结再分发」「七.11 生成器不得记录自身产物哈希」 |
 | 1.1.12 | 2026-10-12 | 「三」补纯文档型 skill 四层检测适配：L1-L3 标 N/A，L4 真实冒烟＝逐文件 SHA256 逐字节一致＋清单一致＋frontmatter＋编码校验；明令禁止 version 号字符串匹配当验收（假绿灯） |
-| 1.1.11 | 2026-09-24 | 新增「七.9 dsh-thinking-effort 插件安装实战」：同名包 3 候选须问清；pnpm 缓存旧解析需显式 @version + minimumReleaseAgeExclude 放行；restart-web.ps1 的 Start-Process 坑改 `cmd /c start /b`、401 误判 TIMEOUT 改三证判定；marker 落 cwd 非 ~/.dsh（web 无 DSH_HOME）；官方验证口径 --dump-default-config + marker pid 对齐 |
+| 1.1.11 | 2026-09-24 | 新增「七.9 dsh-thinking-effort 插件安装实战」：同名包 3 候选须问清；pnpm 缓存旧解析需显式 @version + minimumReleaseAgeExclude 放行；restart-web.ps1 的 Start-Process 坑改 `cmd /c start /b`、401 误判 TIMEOUT 改三证判定；marker 落 cwd 非 $DSH_HOME（web 无 DSH_HOME）；官方验证口径 --dump-default-config + marker pid 对齐 |
 | 1.1.10 | 2026-09-06 | 「七.8」补充端到端实测法（api-gateway RPC：session.create/models/prompt/history，tool/call 的 data.name 为真实调用名）与卸载流程（remove 自动回退 deepseek-official、清空 @anysearch 残留目录、凭据保留、重启生效） |
 | 1.1.9 | 2026-09-06 | 新增「七.8 AnySearch DSH 插件安装实战」：源码树 CLI 直装（不用 npx 拉包）+ corepack pnpm shim + 四层检测命令（plugin list / dump-config / restart-web.ps1 / Client 冒烟）+ web-app host tool-web disabled 是 preset 架构设计、勿在 profile 补丁层开 fetch；Client 方法名 search/extract/listDomains/getSubDomains |
 | 1.1.8 | 2026-09-05 | 凭据格式事故沉淀：credentials.yaml 顶层仅允许 version/refs，密钥须入 refs 区块（插件 README 顶层示例已过时）；AnySearch 配 key 正确写法；改前备份 |
@@ -297,8 +305,8 @@ refs:
 | WorkBuddy Python | `C:\Users\雍远\.workbuddy\binaries\python\versions\3.13.12\python.exe`（3.13.x） |
 | DSH 专用 Python（推荐） | 运行时由 `pdf-parse-v3\assets\check-env.ps1` 探测/一键补装（探测优先；安装到 %USERPROFILE% 下） |
 | dsh-launcher 运行副本 | `D:\DSHS`（launcher.version 1.1.81；为技能源模板渲染出的本机实例，脚本差异多为占位符→真实值） |
-| gh-sync token | `~\.dsh\gh-sync\config.json`（内存使用；push 用 Basic base64("x-access-token:"+token)） |
-| AnySearch key 配置 | `~/.dsh/.credentials.yaml` 的 **refs 区块**下（缩进两格）：`ANYSEARCH_API_KEY: "as_sk_..."`；**禁止顶层追加**（会崩 credentials 插件）。匿名 10/窗口，带 key 20/窗口、日 1000 次 |
+| gh-sync token | `$DSH_HOME\gh-sync\config.json`（内存使用；push 用 Basic base64("x-access-token:"+token)） |
+| AnySearch key 配置 | `$DSH_HOME/.credentials.yaml` 的 **refs 区块**下（缩进两格）：`ANYSEARCH_API_KEY: "as_sk_..."`；**禁止顶层追加**（会崩 credentials 插件）。匿名 10/窗口，带 key 20/窗口、日 1000 次 |
 | AnySearch 插件（2026-09-06 已卸载） | 装/卸命令与检测见「七.8」（remove 后 searchProvider 回退 deepseek-official；key 仍留在 credentials.yaml，重装即生效） |
 | dsh-thinking-effort 插件（2026-09-24 已装 @hytime@0.3.3） | 装卸与四层验证见「七.9」；宿主 marker 在 `C:\Users\雍远\deepseek-harness\thinking-effort-loaded.json`（web 进程无 DSH_HOME 落 cwd）；回滚：`plugin --profile web remove @hytime/dsh-thinking-effort` + 重启 + 删 marker |
 | 系统代理 | 注册表 `127.0.0.1:7897`（Clash Verge）；未开时 pip 走清华镜像+NO_PROXY |

@@ -151,6 +151,7 @@ function Is-SyncIgnored {
     # 注意：只加在这里（阻止复制）；**不要**加进 Test-SyncPurgePath——否则带 -AllowPurge 时
     # 会把仓库里已提交的历史备份整目录删除（GitHub 侧不可逆）。备案见 changelog 321 行。
     if ($Rel -match '(^|[\\/])_backup([\\/]|$)') { return $true }
+    if ($Rel -match '(^|[\\/])_bak([\\/]|$)') { return $true }
     return $false
 }
 
@@ -606,7 +607,7 @@ function Sync-LauncherScript {
             }
             $setupOut = (& (Join-Path $PSHome 'powershell.exe') -NoProfile -ExecutionPolicy Bypass -File (Join-Path $SkillDir 'assets\setup.ps1') -InstallDir $InstallDir -NoShortcut 2>&1 | ForEach-Object { "$_" }) -join "`n"
             if ($LASTEXITCODE -ne 0) {
-                Write-SyncStatus 'error' "已从 GitHub 拉取启动脚本（$($rm.version)），但更新后重装失败（setup.ps1 退出码 $LASTEXITCODE），启动器可能未刷新、补丁可能未打。`n--- setup.ps1 输出 ---`n$setupOut"
+                Write-SyncStatus 'error' "已从 GitHub 拉取启动脚本（$($rm.version)），但更新后重装失败（setup.ps1 退出码 $LASTEXITCODE），启动器可能未刷新。`n--- setup.ps1 输出 ---`n$setupOut"
                 return
             }
             if (-not $NoRestart) {

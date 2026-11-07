@@ -154,6 +154,34 @@ function Invoke-DshRpc {
     }
 }
 
+function Get-SuperagentUrl {
+    # dsh-superagent 面板地址：启动令牌随每次服务启动轮换，故现读「最近一次服务启动」的日志。
+    # 只认这一个名字形态（整名匹配）：dsh-superagent-superagent-<yyyyMMdd>-<HHmmss>-<pid>.log。
+    # 别的 profile 的日志（…-superagent-test-…）、0 字节残留、改动过的名字一律不进候选——
+    # 2026-11-06 托盘提示「读不到启动令牌」，就是这类日志按修改时间挤掉了真正的启动日志。
+    # 排序用文件名而非修改时间：文件名里就是启动时刻，而日志的 mtime 会被后续写入推后
+    # （实测 …-163641-…log 的 mtime 是 17:06）。
+    # 只看最近这一次：它读不到、或里面没有令牌，就返回空串。退回更早的日志等于拿上一次
+    # 启动的旧令牌去撞 401，而 3082 裸 URL 无令牌实测也是 401——两件事都不能静默发生。
+    $pattern = '^dsh-superagent-superagent-\d{8}-\d{6}-\d+\.log$'
+    try {
+        $newest = @(Get-ChildItem -LiteralPath $saLogDir -Filter '*.log' -File -ErrorAction Stop |
+            Where-Object { $_.Name -match $pattern } |
+            Sort-Object -Property Name -Descending | Select-Object -First 1)
+        if ($newest.Count -eq 0) { return '' }
+        $fs = [System.IO.File]::Open($newest[0].FullName, 'Open', 'Read', 'ReadWrite')
+        try {
+            $sr = New-Object System.IO.StreamReader($fs)
+            try { $body = $sr.ReadToEnd() } finally { $sr.Dispose() }
+        } finally { $fs.Close() }
+        $m = [regex]::Matches($body, 'https?://[^\s]*:3082/[^\s]*[?&]token=([A-Za-z0-9_\-]+)')
+        if ($m.Count -gt 0) { return "$saUrl/?token=$($m[$m.Count - 1].Groups[1].Value)" }
+    } catch {
+        try { [void](Write-DshTrayLog -Level 'WARN' -Event 'superagent.token_read_failed' -Fields @{ error = $_.Exception.Message }) } catch {}
+    }
+    return ''
+}
+
 function Get-SystemProxy {
     # 读系统代理（HKCU Internet Settings）；返回 http://host:port 或空串
     try {
