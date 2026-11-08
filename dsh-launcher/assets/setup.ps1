@@ -7,11 +7,15 @@
 #    powershell -NoProfile -ExecutionPolicy Bypass -File setup.ps1 -InstallDir D:\DSHS
 #    powershell -NoProfile -ExecutionPolicy Bypass -File setup.ps1 -NoShortcut
 #    powershell -NoProfile -ExecutionPolicy Bypass -File setup.ps1 -CheckOnly
+#    powershell -NoProfile -ExecutionPolicy Bypass -File setup.ps1 -Force   # 源码树模式 Node 不达标时强行继续
+#
+#  退出码：0=可安装 / 1=装不了（缺 node、DSH 未安装、源码树 Node 不达标等）/ 2=-CheckOnly 探测不到 mode
 # ============================================================
 param(
     [string]$InstallDir = '',
     [switch]$NoShortcut,
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -107,47 +111,236 @@ function Find-DshSourceTree {
         if (Test-Path -LiteralPath (Join-Path $c 'apps\cli\lib\bin.js')) { return $c }
     }
     # 回退：在用户目录与盘根下有限递归（跳过权限拒绝）
+    # 注意：这里必须把命中"记下来、循环结束后再返回"。写在 ForEach-Object 里的 return
+    # 只结束当次迭代，路径会被写进函数输出流，最终函数返回 Object[]，下游 [string] 化后
+    # 变成"路径 + 尾随空格"，导致门槛读不到 package.json、__DSH_ROOT__ 渲染成无效路径。
+    $hit = $null
     foreach ($r in @($env:USERPROFILE) + @($cands | Where-Object { $_ -notmatch 'deepseek-harness$' })) {
         try {
-            Get-ChildItem -LiteralPath $r -Directory -Filter 'deepseek-harness' -Recurse -Depth 2 -ErrorAction SilentlyContinue |
-                ForEach-Object {
-                    if (Test-Path -LiteralPath (Join-Path $_.FullName 'apps\cli\lib\bin.js')) { return $_.FullName }
-                }
+            foreach ($d in @(Get-ChildItem -LiteralPath $r -Directory -Filter 'deepseek-harness' -Recurse -Depth 2 -ErrorAction SilentlyContinue)) {
+                if (Test-Path -LiteralPath (Join-Path $d.FullName 'apps\cli\lib\bin.js')) { $hit = $d.FullName; break }
+            }
         } catch {}
+        if ($hit) { break }
     }
+    if ($hit) { return $hit }
     return $null
 }
 
+$script:NodeMinVer = '24.9.0'   # 默认值；运行期会被 Get-DshNodeRequirement 按已装 DSH 的 engines 覆盖
+$script:IsBadPath = { param($p) $p -match 'command-process-owner|daimon|daimon-share|kimi-desktop|kimi-work|workbuddy|nvm4w|corepack' }
+function Get-PathNodeExe {
+    # "PATH 上会被实际用到"的那个 node（与 Find-Node ① 同一套过滤），用于 path 模式告警。
+    $all = @(Get-Command node -All -ErrorAction SilentlyContinue | Where-Object { $_.Source })
+    $hit = @($all | Where-Object { $_.Source -like '*.exe' -and -not (& $script:IsBadPath $_.Source) })
+    if ($hit.Count -gt 0) { return $hit[0].Source }
+    return $null
+}
+$script:NodeReq = $null          # 运行期指向 engines 解析结果（含区间）；未设置时 Test-UsableNode 退回 Min
+$script:NodeRejects = New-Object System.Collections.ArrayList
+$script:NodeRejectSeen = @{}
+function Add-NodeReject([string]$path, [string]$why) {
+    # 所有被跳过的候选都记下来（去重）：否则「存在但不可用」会被误报成「完全未找到」
+    if (-not $path) { return }
+    if ($script:NodeRejectSeen.ContainsKey($path)) { return }
+    $script:NodeRejectSeen[$path] = $true
+    [void]$script:NodeRejects.Add($path + ' — ' + $why)
+}
+function Test-UsableNode([string]$path) {
+    # 可用则给出版本字符串，否则 $null，并把原因记入 $script:NodeRejects。
+    # 定义在脚本作用域（而非 Find-Node 内部），因为 path 模式的告警分支也要用它。
+    if (-not $path) { return $null }
+    # 标准目录里「本来就没有」属正常探测未命中，不入拒绝清单（只记「存在但不可用」）
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        $v = (& $path --version 2>$null | Select-Object -First 1) -as [string]
+        if (-not $v -or $v -notmatch '^v?(\d+)\.(\d+)\.(\d+)') { Add-NodeReject $path '无法取得版本号（输出不可解析）'; return $null }
+        $ver = [version]($Matches[1] + '.' + $Matches[2] + '.' + $Matches[3])
+        # 只判断"可运行 + 版本号可解析"；是否达标由调用方按区间判定
+        # （源码树模式在那里给出"建议退出 / -Force 强行继续"）
+        return $v.Trim()
+    } catch { Add-NodeReject $path ('执行失败：' + $_.Exception.Message); return $null }
+}
+function ConvertFrom-EnginesRange([string]$Raw) {
+    # 把 engines.node 解析成区间列表。支持：>=、>、<=、<、^、~、裸版本、X.Y.x / *、以及 || 与空格（AND）。
+    # 每个 || 分支取其内部条件的交集（下界取最大、上界取最小）；最终要求 = 各分支的并集。
+    # 无法识别的条件会记入 Unparsed 并如实回报，不静默当成通过。
+    $branches = @(); $unparsed = @()
+    foreach ($br in ($Raw -split '\|\|')) {
+        $br = ($br -replace '(>=|<=|>|<|\^|~)\s+', '$1')   # "">= 24.9.0"" 这类带空格写法先归一
+        $lo = $null; $hi = $null; $ok = $false
+        foreach ($tok in ($br.Trim() -split '\s+')) {
+            if (-not $tok) { continue }
+            if ($tok -match '^[xX*]$') { if (-not $lo) { $lo = [version]'0.0.0' }; $ok = $true; continue }
+            $wm = [regex]::Match($tok, '^v?(\d+)(?:\.(\d+))?(\.[xX*])$')
+            if ($wm.Success) {
+                $wa = [int]$wm.Groups[1].Value
+                if ($wm.Groups[2].Success) {
+                    $wb = [int]$wm.Groups[2].Value
+                    $wlo = [version]($wa.ToString() + '.' + $wb.ToString() + '.0')
+                    $whi = [version]($wa.ToString() + '.' + ($wb + 1).ToString() + '.0')
+                } else {
+                    $wlo = [version]($wa.ToString() + '.0.0')
+                    $whi = [version](($wa + 1).ToString() + '.0.0')
+                }
+                # 求交，而不是覆盖（否则 `>=24.9.0 24.x` 与 `24.x >=24.9.0` 结果不同）
+                if (-not $lo -or $wlo -gt $lo) { $lo = $wlo }
+                if (-not $hi -or $whi -lt $hi) { $hi = $whi }
+                $ok = $true; continue
+            }
+            $m = [regex]::Match($tok, '^(>=|<=|>|<|\^|~)?\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$')
+            if (-not $m.Success) { $unparsed += $tok; continue }
+            $op = $m.Groups[1].Value
+            $a = [int]$m.Groups[2].Value
+            $b = if ($m.Groups[3].Success) { [int]$m.Groups[3].Value } else { -1 }
+            $c2 = if ($m.Groups[4].Success) { [int]$m.Groups[4].Value } else { -1 }
+            $bb = if ($b -ge 0) { $b } else { 0 }
+            $cc = if ($c2 -ge 0) { $c2 } else { 0 }
+            $v = [version]($a.ToString() + '.' + $bb.ToString() + '.' + $cc.ToString())
+            switch ($op) {
+                '>=' { if ($null -eq $lo -or $v -gt $lo) { $lo = $v }; $ok = $true }
+                '>'  { if ($null -eq $lo -or $v -ge $lo) { $lo = [version]($a.ToString() + '.' + $bb.ToString() + '.' + ($cc + 1).ToString()) }; $ok = $true }
+                '<'  { if ($null -eq $hi -or $v -lt $hi) { $hi = $v }; $ok = $true }
+                '<=' { if ($null -eq $hi -or $v -lt $hi) { $hi = [version]($a.ToString() + '.' + $bb.ToString() + '.' + ($cc + 1).ToString()) }; $ok = $true }
+                '^'  {
+                    $u = if ($a -gt 0) { [version](($a + 1).ToString() + '.0.0') } else { [version]('0.' + ($bb + 1).ToString() + '.0') }
+                    if ($null -eq $lo -or $v -gt $lo) { $lo = $v }
+                    if ($null -eq $hi -or $u -lt $hi) { $hi = $u }
+                    $ok = $true
+                }
+                '~'  {
+                    $u = [version]($a.ToString() + '.' + ($bb + 1).ToString() + '.0')
+                    if ($null -eq $lo -or $v -gt $lo) { $lo = $v }
+                    if ($null -eq $hi -or $u -lt $hi) { $hi = $u }
+                    $ok = $true
+                }
+                default {
+                    # 裸版本按 npm 的 x-range 语义（2026-11-08 审查）：
+                    #   "24"     → [24.0.0, 25.0.0)
+                    #   "24.9"   → [24.9.0, 24.10.0)
+                    #   "24.9.0" → 精确 [24.9.0, 24.9.1)
+                    # 原实现一律当精确版本，会把装了 24.20.0 的机器误判为不满足 "24"。
+                    if (-not $m.Groups[3].Success) {
+                        $u2 = [version](($a + 1).ToString() + '.0.0')
+                    } elseif (-not $m.Groups[4].Success) {
+                        $u2 = [version]($a.ToString() + '.' + ($bb + 1).ToString() + '.0')
+                    } else {
+                        $u2 = [version]($a.ToString() + '.' + $bb.ToString() + '.' + ($cc + 1).ToString())
+                    }
+                    if ($null -eq $lo -or $v -gt $lo) { $lo = $v }
+                    if ($null -eq $hi -or $u2 -lt $hi) { $hi = $u2 }
+                    $ok = $true
+                }
+            }
+        }
+        if ($ok) {
+            if (-not $lo) { $lo = [version]'0.0.0' }   # 只有上界的条件（如 <=22.0.0）此前被整条丢弃
+            $branches += [pscustomobject]@{ Lower = $lo; Upper = $hi }
+        }
+    }
+    return [pscustomobject]@{ Branches = $branches; Unparsed = $unparsed }
+}
+function Get-DshNodeRequirement {
+    # 门槛的唯一合法来源是「将被启动的那份 DSH」自己声明的 engines.node。
+    # 候选按模式隔离：PATH 上装了 dsh 就只认它旁边那份包；否则才看源码树。
+    # 老版 npm 包没有 engines 字段时，按已装版本给默认要求（>=0.2.2 用 >=24.9.0，更早用 ^22.19.0 || >=24）。
+    param([string]$DshPath, [string]$DshRoot)
+    $res = [pscustomobject]@{ Raw = '>=24.9.0'; Min = [version]'24.9.0'; Source = 'fallback'; Branches = @(); Unparsed = @(); File = '' }
+    $cands = New-Object System.Collections.ArrayList
+    if ($DshPath) {
+        $dir = Split-Path $DshPath -Parent
+        [void]$cands.Add((Join-Path $dir 'node_modules\@deepseek-ai\dsh\package.json'))
+        [void]$cands.Add((Join-Path (Split-Path $dir -Parent) 'node_modules\@deepseek-ai\dsh\package.json'))
+    } elseif ($DshRoot) {
+        [void]$cands.Add((Join-Path $DshRoot 'apps\cli\package.json'))
+        [void]$cands.Add((Join-Path $DshRoot 'package.json'))
+    }
+    foreach ($cand in @($cands | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $cand)) { continue }
+        $raw = ''; $pkgVer = ''
+        try {
+            $pkg = Get-Content -LiteralPath $cand -Raw -Encoding UTF8 | ConvertFrom-Json
+            $raw = [string]$pkg.engines.node
+            $pkgVer = [string]$pkg.version
+        } catch { continue }
+        if (-not $raw) {
+            # 老包没有 engines：按包版本给默认要求
+            if ($pkgVer) {
+                $pv = $null
+                try { $pv = [version](($pkgVer -replace '-.*$','')) } catch { }
+                if ($pv -and $pv -lt [version]'0.2.2') {
+                    $res.Raw = '^22.19.0 || >=24'; $res.Source = 'fallback(按已装版本 <0.2.2)'
+                    $res | Add-Member -NotePropertyName File -NotePropertyValue $cand -Force
+                    $parsed0 = ConvertFrom-EnginesRange $res.Raw
+                    $res.Branches = $parsed0.Branches
+                    $res.Min = ($parsed0.Branches | ForEach-Object { $_.Lower } | Sort-Object | Select-Object -First 1)
+                    return $res
+                }
+            }
+            continue
+        }
+        $parsed = ConvertFrom-EnginesRange $raw
+        $res.Raw = $raw
+        $res.File = $cand
+        if ($parsed.Branches.Count -gt 0) {
+            $res.Branches = $parsed.Branches
+            $res.Min = ($parsed.Branches | ForEach-Object { $_.Lower } | Sort-Object | Select-Object -First 1)
+            $label = if ($parsed.Branches.Count -gt 1) { 'package.json(||)' }
+                     elseif (-not $parsed.Branches[0].Upper) { 'package.json(>=)' }
+                     elseif ($parsed.Branches[0].Lower -eq [version]'0.0.0') { 'package.json(<=)' }
+                     else { 'package.json(^/~)' }
+            if ($parsed.Unparsed.Count -gt 0) { $label += '（部分未识别：' + ($parsed.Unparsed -join ' ') + '）' }
+            $res.Source = $label
+            $res.Unparsed = $parsed.Unparsed
+        } else {
+            $res.Source = 'package.json(无法解析，回落默认)'
+            $res.Unparsed = $parsed.Unparsed
+        }
+        return $res
+    }
+    return $res
+}
+function Test-NodeVersionSatisfies([version]$Version, $Req) {
+    # 版本是否落在要求区间内（任一分支命中即通过）。无区间信息时退回单一下界。
+    if (-not $Version) { return $false }
+    if (-not $Req -or -not $Req.Branches -or $Req.Branches.Count -eq 0) { return ($Version -ge $Req.Min) }
+    foreach ($b in $Req.Branches) {
+        if ($Version -ge $b.Lower -and ($null -eq $b.Upper -or $Version -lt $b.Upper)) { return $true }
+    }
+    return $false
+}
 function Find-Node {
     # 必须返回「真 node.exe」：托盘会写入渲染出的路径并经 Explorer/启动文件夹启动，
     # 若写入 agent 环境的 node.cmd 包装器（如 kimi-desktop command-process-owner\bin\node.cmd），
     # 正常用户环境缺少其依赖的环境变量，web 会起不来（曾引发「反复启动失败」）。
     # 多机分发顺序（2026-09-05）：PATH → 官方/nvm 通用目录 → 宿主私有运行时 → node.cmd
-    # 版本门槛（2026-09-05 对抗审查 M4）：DSH 要求 Node ^22.19.0 || >=24（apps/cli package.json engines）；
+    # 版本门槛（2026-11-08 适配 DSH 0.2.2-rc.1）：新包 engines.node = ">=24.9.0"（0.2.1-rc.5 及更早为 ^22.19.0 || >=24）；
     # 每个候选先跑 --version 验证「可运行 + 版本达标」，损坏/过旧/32位装错一律跳过。
     # S5(建议,2026-09-05)：排除面与 Start-DshServer 环境清理正则对齐
     # （kimi-desktop|daimon|kimi-work）+ workbuddy 宿主私有 node；nvm4w/corepack 亦排除
-    $isBadPath = { param($p) $p -match 'command-process-owner|daimon|daimon-share|kimi-desktop|kimi-work|workbuddy|nvm4w|corepack' }
-    $minVer = [version]'22.19.0'
-    function Test-UsableNode([string]$path) {
-        # 返回可用则给出版本字符串，否则 $null（防止 Test-Path 命中但不可执行/版本过低）
-        if (-not $path -or -not (Test-Path -LiteralPath $path)) { return $null }
-        try {
-            $v = (& $path --version 2>$null | Select-Object -First 1) -as [string]
-            if (-not $v -or $v -notmatch '^v?(\d+)\.(\d+)\.(\d+)') { return $null }
-            $ver = [version]($Matches[1] + '.' + $Matches[2] + '.' + $Matches[3])
-            # DSH engines: ^22.19.0 || >=24.0.0 —— 22.x 需 >=22.19.0；23.x 被 engines 排除；
-            # 24+ 全接受（S3 建议：与 npm engines 语义一致，避免误放行 23.x）
-            $ok = (($ver.Major -eq 22 -and $ver -ge $minVer) -or ($ver.Major -ge 24))
-            if (-not $ok) { return $null }
-            return $v.Trim()
-        } catch { return $null }
-    }
+    $isBadPath = $script:IsBadPath
     $all = @(Get-Command node -All -ErrorAction SilentlyContinue | Where-Object { $_.Source })
-    # ① PATH 上的真 node.exe（官方安装 / nvm 激活版都会进 PATH；排除 agent 包装目录）
-    foreach ($n in @($all | Where-Object { $_.Source -like '*.exe' -and -not (& $isBadPath $_.Source) })) {
-        if (Test-UsableNode $n.Source) { return $n.Source }
+    # 候选收集：只判断「可运行的 .exe + 版本号可解析」，不在这里按区间筛；
+    # 版本是否达标交给调用方（源码树模式据此给出"建议退出 / -Force 强行继续"）。
+    $found = New-Object System.Collections.ArrayList
+    $tryAdd = {
+        param($p)
+        if (-not $p) { return }
+        # 非 .exe 一律拒绝：托盘用 Start-Process -RedirectStandard* 启动 web，只接受可执行映像。
+        # 这一层必须在这里，而不是只在"版本不达标"分支里（否则达标但为 .cmd 的候选会被写进启动器）。
+        if (-not ($p -like '*.exe')) { Add-NodeReject $p '非 .exe（托盘无法以重定向方式启动）'; return }
+        $v = Test-UsableNode $p
+        if ($v) {
+            try {
+                if (-not (@($found | Where-Object { $_.Path -eq $p }).Count -gt 0)) {
+                    [void]$found.Add([pscustomobject]@{ Path = $p; Version = [version]($v.TrimStart('v')) })
+                }
+            }
+            catch { Add-NodeReject $p ('版本号无法解析：' + $_.Exception.Message) }
+        }
     }
+    # ① PATH 上的真 node.exe（官方安装 / nvm 激活版都会进 PATH；排除 agent 包装目录）
+    foreach ($n in @($all | Where-Object { $_.Source -like '*.exe' -and -not (& $isBadPath $_.Source) })) { & $tryAdd $n.Source }
     # ② 通用安装目录（PATH 被宿主精简/污染时兜底；多机分发主要依赖这段）：
     #    官方安装 Program Files\nodejs / 用户级安装 %LOCALAPPDATA%\Programs\nodejs /
     #    nvm-windows（NVM_HOME 根、NVM_SYMLINK 激活链接）
@@ -157,29 +350,27 @@ function Find-Node {
     if ($env:LOCALAPPDATA) { [void]$cands.Add((Join-Path $env:LOCALAPPDATA 'Programs\nodejs\node.exe')) }
     if ($env:NVM_HOME)     { [void]$cands.Add((Join-Path $env:NVM_HOME 'node.exe')) }
     if ($env:NVM_SYMLINK)  { [void]$cands.Add((Join-Path $env:NVM_SYMLINK 'node.exe')) }
-    foreach ($c in @($cands | Select-Object -Unique)) {
-        if (Test-UsableNode $c) { return $c }
-    }
+    foreach ($c in @($cands | Select-Object -Unique)) { & $tryAdd $c }
     # ③ 宿主私有运行时（kimi-desktop / workbuddy 自带真 node.exe；多机不通用，仅在宿主机上兜底）
-    if ($env:KIMI_DESKTOP_RUNTIME_NODE -and (Test-UsableNode $env:KIMI_DESKTOP_RUNTIME_NODE)) {
-        Write-Host "警告：PATH 与通用目录均未找到达标的 Node.js，回退使用宿主运行时 $env:KIMI_DESKTOP_RUNTIME_NODE。建议安装官方 Node.js。" -ForegroundColor Yellow
-        return $env:KIMI_DESKTOP_RUNTIME_NODE
-    }
+    & $tryAdd $env:KIMI_DESKTOP_RUNTIME_NODE
     # workbuddy 多版本并存时按版本降序取最新（M4：原 Select-Object -First 1 按字典序不可靠）
     # S4(建议,2026-09-05)：目录名非 semver（如 node-v22.x-win-x64）时跳过，防 [version] cast 抛异常中止安装
-    $wb = @(Get-ChildItem "$env:USERPROFILE\.workbuddy\binaries\node\versions\*\node.exe" -ErrorAction SilentlyContinue |
-        Where-Object { $_.Directory.Name -match '^v?\d+\.\d+\.\d+' } |
-        Sort-Object { [version](($_.Directory.Name -replace '^v','') -replace '^(\d+)\.(\d+)\.(\d+).*$','$1.$2.$3') } -Descending |
-        ForEach-Object { if (Test-UsableNode $_.FullName) { $_ } } | Select-Object -First 1)
-    if ($wb) {
-        Write-Host "警告：PATH 与通用目录均未找到达标的 Node.js，回退使用宿主运行时 $($wb.FullName)。建议安装官方 Node.js。" -ForegroundColor Yellow
-        return $wb.FullName
+    foreach ($w in @(Get-ChildItem "$env:USERPROFILE\.workbuddy\binaries\node\versions\*\node.exe" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Directory.Name -match '^v?\d+\.\d+\.\d+' })) { & $tryAdd $w.FullName }
+    # ④ 不再接受 node.cmd 包装器（结构性原因，非偏好）：
+    #    托盘启动 web 用 Start-Process -RedirectStandardOutput/-RedirectStandardError，
+    #    该 API 只能启动可执行映像；.cmd 交给它必抛"不是有效的 Win32 应用程序"，
+    #    而安装期验证走 cmd /c 却能通过（批处理间转移控制、退出码照常）→「装得上、起不来」。
+    #    这是历史上「反复启动失败」的同源坑，故 .cmd 一律记为拒绝并交回上层明确报错。
+    foreach ($c in @($all | Where-Object { $_.Source -notlike '*.exe' -and -not (& $isBadPath $_.Source) })) {
+        Add-NodeReject $c.Source '非 .exe 包装器（托盘只能以重定向方式启动可执行映像）'
     }
-    # ④ 最后手段：node.cmd（仅当确无 .exe 可选），打警告（.cmd 无法校验版本，仅提示）
-    $cmd = @($all | Where-Object { $_.Source -like '*.cmd' -and -not (& $isBadPath $_.Source) } | Select-Object -First 1)
-    if ($cmd) {
-        Write-Host "警告：未找到可用的 node.exe，回退使用 $($cmd[0].Source)。若托盘启动的 DSH Web 起不来，请安装 Node.js 22.19 及以上。" -ForegroundColor Yellow
-        return $cmd[0].Source
+    if ($found.Count -gt 0) {
+        $best = @($found | Sort-Object Version -Descending)[0]
+        if ($found.Count -gt 1) {
+            Write-Host ('提示：找到 ' + $found.Count + ' 个可用 node，选用版本最高的 ' + $best.Version + '。') -ForegroundColor DarkGray
+        }
+        return $best.Path
     }
     return $null
 }
@@ -189,14 +380,71 @@ $dsRoot  = $null
 $nodeExe = $null
 $dshPath = (Get-Command dsh -ErrorAction SilentlyContinue).Source
 
+# 先定位源码树与门槛，再找 node（顺序不能反：门槛要按"将被启动的那份 DSH"来定）
 $tree = Find-DshSourceTree
+$nodeReq = Get-DshNodeRequirement -DshPath $dshPath -DshRoot $tree
+$script:NodeReq = $nodeReq
+$script:NodeMinVer = $nodeReq.Min.ToString()
 $node = Find-Node
 
 if ($dshPath) { $mode = 'path' }
 elseif ($tree -and $node) { $mode = 'source'; $dsRoot = $tree; $nodeExe = $node }
 
+if ($mode -eq 'source' -and $node) {
+    # 源码树模式是唯一"按门槛挑 node"的模式：选中的 node 必须真的落在 engines 区间内。
+    # 默认：报错 + 建议退出 + 不写任何东西（exit 1）。
+    # 强行继续（-Force）：先重新校验一遍，把校验项与风险打印出来，再继续安装。
+    function Get-NodeVersionOf([string]$exe) {
+        $v = (& $exe --version 2>$null | Select-Object -First 1) -as [string]
+        if ($v -match '^v?(\d+)\.(\d+)\.(\d+)') { return [version]($Matches[1] + '.' + $Matches[2] + '.' + $Matches[3]) }
+        return $null
+    }
+    $nvVer = Get-NodeVersionOf $node
+    $nvOk = Test-NodeVersionSatisfies $nvVer $nodeReq
+    if (-not $nvOk) {
+        Write-Host ('错误：选中的 node（' + $node + '，' + $nvVer + '）不满足该 DSH 的要求 ' + $nodeReq.Raw + '（来源 ' + $nodeReq.Source + '）。') -ForegroundColor Red
+        Write-Host '建议退出：本次未做任何安装或写入。' -ForegroundColor Yellow
+        Write-Host '  处理建议：安装满足要求的 Node.js 后重跑。' -ForegroundColor Yellow
+        Write-Host '  如需强行继续：加 -Force 重跑——它会先重新校验一次，把校验结果与风险打印出来，再继续安装。' -ForegroundColor Yellow
+        if (-not $Force) { exit 1 }
+        Write-Host ''
+        Write-Host '== -Force：重新校验（校验后继续）==' -ForegroundColor Yellow
+        $again = Get-NodeVersionOf $node
+        $againOk = Test-NodeVersionSatisfies $again $nodeReq
+        Write-Host ('  1) node 可执行        : ' + (Test-Path -LiteralPath $node))
+        Write-Host ('  2) node 报告版本      : ' + $again)
+        Write-Host ('  3) DSH 要求           : ' + $nodeReq.Raw + '（来源 ' + $nodeReq.Source + '）')
+        Write-Host ('  4) 区间判定           : ' + $(if ($againOk) { '通过' } else { '不通过' }))
+        $isExe = ($node -like '*.exe')
+        Write-Host ('  5) 是否 .exe 映像     : ' + $isExe)
+        if (-not $isExe) {
+            Write-Host '  非 .exe 无法被托盘以重定向方式启动，即使 -Force 也不能继续。' -ForegroundColor Red
+            exit 1
+        }
+        Write-Host '  风险：DSH 可能在启动期自行拒绝该 Node，表现为托盘反复重启、web 起不来；' -ForegroundColor Yellow
+        Write-Host '        届时用 D:\DSHS\DSH-rescue.cmd 自救，并安装满足要求的 Node.js。' -ForegroundColor Yellow
+        Write-Host '  已获 -Force 授权：继续安装。' -ForegroundColor Yellow
+        Write-Host ''
+    }
+}
+
 $dshCmdPath = ''
 if ($mode -eq 'path') {
+    # path 模式用的是系统 PATH 上的 node，setup 无法替换它 —— 唯一能做的是把事实说清楚
+    # 用 Find-Node 选中的那个候选来判（同一套排除规则 + 同一谓词），不再另起一次 Get-Command
+    # path 模式下 dsh 实际用的是 PATH 上第一个合格 .exe，不是"全部候选里版本最高"的那个
+    $pathExe = Get-PathNodeExe
+    if (-not $pathExe) {
+        Write-Host '警告：PATH 上找不到可用的 node.exe；托盘启动的 dsh web 可能起不来。' -ForegroundColor Yellow
+    } else {
+        $pnVer = Test-UsableNode $pathExe
+        $pnOk = $false
+        if ($pnVer) { $pnOk = Test-NodeVersionSatisfies ([version]$pnVer.TrimStart('v')) $nodeReq }
+        if (-not $pnOk) {
+            Write-Host ('警告：将要使用的 node（' + $pathExe + '，' + $pnVer + '）不满足该 DSH 的要求 ' + $nodeReq.Raw + '（来源 ' + $nodeReq.Source + '）。') -ForegroundColor Yellow
+            Write-Host '     托盘启动的 dsh web 会用它；请升级 Node 或调整 PATH 顺序。' -ForegroundColor Yellow
+        }
+    }
     $c = Get-Command dsh.cmd -ErrorAction SilentlyContinue
     if ($c) { $dshCmdPath = $c.Source }
     # 不回退到 $dshPath：Get-Command dsh 可能解析到 dsh.ps1（ExternalScript 优先），
@@ -208,19 +456,36 @@ if ($CheckOnly) {
     if ($dshPath) { Write-Host "  PATH dsh = $dshPath" }
     if ($tree)    { Write-Host "  源码树   = $tree" }
     if ($node)    { Write-Host "  node     = $node" }
+    Write-Host ('  要求     = ' + $nodeReq.Raw + '（来源 ' + $nodeReq.Source + '，实际门槛 ' + $script:NodeMinVer + '）')
+    if ($nodeReq.File) { Write-Host ('  门槛文件 = ' + $nodeReq.File) }
+    if ($nodeReq.Unparsed -and $nodeReq.Unparsed.Count -gt 0) { Write-Host ('  未识别项 = ' + ($nodeReq.Unparsed -join ' ')) -ForegroundColor Yellow }
+    if ($mode -eq 'path') {
+        $pn = @(Get-Command node -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -like '*.exe' } | Select-Object -First 1)
+        if ($pn.Count -gt 0) { Write-Host ('  PATH node= ' + $pn[0].Source + '  版本 ' + ((& $pn[0].Source --version 2>$null | Select-Object -First 1))) }
+    }
+    if ($script:NodeRejects -and $script:NodeRejects.Count -gt 0) {
+        Write-Host '  被跳过的候选：' -ForegroundColor Yellow
+        foreach ($r in $script:NodeRejects) { Write-Host ('    - ' + $r) -ForegroundColor Yellow }
+    }
     if ($dshPath -and $tree) {
         Write-Host '  !! PATH 有 dsh 且源码树也存在：当前将按 PATH 模式（启动 PATH 版 dsh）。' -ForegroundColor Yellow
         Write-Host '     DSH 本体安装不受影响（源码树仍已安装）；若要以源码树运行：' -ForegroundColor Yellow
         Write-Host '     从 PATH 移除 dsh（如 npm uninstall -g @deepseek-ai/dsh）后重跑 setup.ps1。' -ForegroundColor Yellow
     }
-    exit 0
+    if ($mode -eq '') { exit 2 } else { exit 0 }
 }
 
 if ($mode -eq '') {
     if ($tree -and -not $node) {
         # 有源码树但缺 Node.js：明确指引安装（多机首次安装最常见失败原因）
-        Write-Host '错误：已找到 DSH 源码树，但未找到可用的 Node.js。' -ForegroundColor Red
-        Write-Host '请安装 Node.js LTS（官方安装包 https://nodejs.org 或 nvm-windows https://github.com/coreybutler/nvm-windows），' -ForegroundColor Yellow
+        Write-Host ('错误：已找到 DSH 源码树，但没有任何可用的 Node.js（要求 ' + $script:NodeMinVer + ' 及以上）。') -ForegroundColor Red
+        if ($script:NodeRejects -and $script:NodeRejects.Count -gt 0) {
+            Write-Host '  以下候选被跳过（含原因）：' -ForegroundColor Yellow
+            foreach ($r in $script:NodeRejects) { Write-Host ('    - ' + $r) -ForegroundColor Yellow }
+        } else {
+            Write-Host '  未在 PATH 与通用安装目录里找到任何 node 候选。' -ForegroundColor Yellow
+        }
+        Write-Host '请安装 Node.js 24.9 及以上（官方安装包 https://nodejs.org 或 nvm-windows https://github.com/coreybutler/nvm-windows），' -ForegroundColor Yellow
         Write-Host '安装后重跑本脚本；或先用 -CheckOnly 查看探测细节。' -ForegroundColor Yellow
     } else {
         Write-Host '错误：未检测到 DSH 安装。' -ForegroundColor Red

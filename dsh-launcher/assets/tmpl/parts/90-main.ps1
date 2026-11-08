@@ -68,9 +68,24 @@ if (-not $CheckOnly) {
                 }
                 if ($appeared) {
                     if ($OpenBrowser) {
-                        for ($i2 = 0; $i2 -lt 40; $i2++) {
-                            if ((Get-DshListenerPid) -ne 0) { break }
+                        # M4（2026-11-08 复审）：等"令牌被服务接受"，不是"端口有监听"。
+                        # 截止时间必须用墙钟：240 次 ×250ms 并不是 60 秒——本机单次 Get-DshListenerPid 实测 648ms，
+                        # 按次数会拖到 200 秒以上；快机上又只有约 67 秒，短于 79 秒冷启动照样开早。
+                        # 上限取 max(120, 动态阈值)，高于托盘自身就绪环的下限 90 秒；就绪环用动态值。
+                        $dlSec = 120
+                        try { $dlSec = [Math]::Max(120, [int](Get-DshReadyTimeoutSec)) } catch {}
+                        $dlDeadline = (Get-Date).AddSeconds($dlSec)
+                        while ((Get-Date) -lt $dlDeadline) {
+                            if ((Get-DshListenerPid) -ne 0) {
+                                $tkE = Get-DshLaunchToken
+                                if ($tkE -and (Test-DshTokenFresh $tkE)) { break }
+                            }
                             Start-Sleep -Milliseconds 250
+                        }
+                        $tkE2 = Get-DshLaunchToken
+                        if (-not ($tkE2 -and (Test-DshTokenFresh $tkE2))) {
+                            try { [void](Write-DshTrayLog -Level 'WARN' -Event 'elevation.open_before_ready' -Fields @{ waited_sec = [string]$dlSec }) } catch {}
+                            try { Show-DshNotice(5000, 'DSH', '等待服务就绪超时，将直接打开页面；若打不开，稍后点「打开 Web UI」。', 'Warning') } catch {}
                         }
                         try { Open-Url $webUrl } catch {}
                     }
@@ -141,14 +156,22 @@ $proc = $null
 $script:startFailed = $false
 $script:startThrew = $false
 $script:portBusyByOther = $false
+# 只有本进程真拉起服务才会置真（附着路径保持 false）——必须在拉起之前初始化，
+# 否则会覆盖冷启分支写入的 true（2026-11-08 R3 审查 S1）。
+$script:startedByMe = $false
 if ($listener -eq 0) {
+    $script:readyStartWall = Get-Date      # M2：计时起点在拉起服务之前，否则样本少算 1-3 秒
     try { $proc = Start-DshServer }
     catch {
         $script:startThrew = $true
         try { [void](Write-DshTrayLog -Level 'ERROR' -Event 'server.start_throw' -Fields @{ error = $_.Exception.Message }) } catch {}
         $proc = $null
     }
-    if ($proc) { Write-Output "已启动 DSH Web（PID $($proc.Id)）" }
+    if ($proc) {
+        Write-Output "已启动 DSH Web（PID $($proc.Id)）"
+        $script:startedByMe = $true
+        $script:proc = $proc               # M6：首启也要赋给 $script:proc，否则看护 600 秒启动保护不生效
+    }
     else { Write-Output '__MODE_START_FAILED_MSG__'; $script:startFailed = $true }
 } else {
     # 2026-11-01：附着前校验属主——端口被别的程序占用时绝不当作「DSH 已在运行」
@@ -286,7 +309,8 @@ Stop-Process -Id $trayPid -Force -ErrorAction SilentlyContinue
 `$trayArg = '"' + `$trayRaw + '"'
 `$installRaw = '$installEsc'
 `$installArg = '"' + `$installRaw + '"'
-Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',`$setupArg,'-InstallDir',`$installArg,'-NoShortcut' -Wait -WindowStyle Hidden
+`$setupProc = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',`$setupArg,'-InstallDir',`$installArg,'-NoShortcut' -Wait -PassThru -WindowStyle Hidden
+try { Set-Content -LiteralPath ('$helperEsc' + '.exit.txt') -Value ([string]`$setupProc.ExitCode) -Encoding ascii -Force } catch { }
 Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',`$trayArg -WindowStyle Hidden
 Remove-Item -LiteralPath '$helperEsc' -Force -ErrorAction SilentlyContinue
 "@
@@ -395,6 +419,7 @@ $webTimer.Add_Tick({
                     return
                 }
                 Show-DshNotice(3000, 'DSH', 'DSH Web 已停止，正在自动重启…', 'Info')
+                $script:readyStartWall = Get-Date      # M2：看护重启同样在 spawn 之前起算
                 try { $script:proc = Start-DshServer }
                 catch {
                     try { [void](Write-DshTrayLog -Level 'ERROR' -Event 'server.start_throw_watchdog' -Fields @{ error = $_.Exception.Message }) } catch {}
@@ -408,6 +433,9 @@ $webTimer.Add_Tick({
                 } else {
                     # 看护重启成功：重置自动开浏览器标记；就绪 Timer 若已停止（如旧逻辑在进程退出时 Stop）则重新启动
                     $script:browserOpened = $false
+                    $script:readyTicks = 0                        # 复位计数：否则重启后第一个 tick 就满足超时阈值
+                    $script:readyFromTimeout = $false             # 复位：否则上一轮的"超时收场"会一直压掉后续真实样本
+                    $script:startedByMe = $true                   # 看护重启是一次真冷启，允许记样本
                     if ($null -ne $readyTimer -and -not $readyTimer.Enabled) { $readyTimer.Start() }
                 }
             }
@@ -891,7 +919,11 @@ if (-not $script:portBusyByOther -and -not $script:startFailed) {
 # 非阻塞就绪检查（Timer，不卡消息循环）
 if ($OpenBrowser) {
     $script:browserOpened = $false
+
     $script:readyTicks = 0
+    if (-not $script:readyStartWall) { $script:readyStartWall = Get-Date }
+    $script:readyTimeoutTicks = Get-DshReadyTimeoutSec
+    $script:readyFromTimeout = $false
     $script:noTokenHintShown = $false
 $readyTimer = New-Object System.Windows.Forms.Timer
     $readyTimer.Interval = 1000
@@ -914,12 +946,27 @@ $readyTimer = New-Object System.Windows.Forms.Timer
             } elseif ($up -and (Test-DshWebAuthed)) {
                 $ok = $true
             }
-            if (-not $ok -and $script:readyTicks -ge 30) {
-                # 30 秒仍拿不到认证会话（读不到令牌/服务异常）：停止等待并如实提示，避免永远不开页面
+            if (-not $ok -and $script:readyTicks -ge $script:readyTimeoutTicks) {
+                # 阈值不再写死：由 Get-DshReadyTimeoutSec 按历史"启动→就绪"耗时动态算（默认 120 秒）
                 $ok = $true
-                try { Show-DshNotice(8000, 'DSH', '端口已就绪但未能完成浏览器认证，将尝试直接打开页面；若看到 401，请用 dsh-web.log 里带 token 的地址打开一次。', 'Warning') } catch {}
+                $script:readyFromTimeout = $true
+                try { Show-DshNotice(8000, 'DSH', '端口已就绪但浏览器认证未完成，将尝试直接打开页面；若看到 401，请用 dsh-web.log 里带 token 的地址打开一次。', 'Warning') } catch {}
             }
-            if ($ok) { $readyTimer.Stop(); if (-not $script:browserOpened) { $script:browserOpened = $true; Show-DshNotice(2000, 'DSH', 'DSH Web 已就绪，打开浏览器。', 'Info'); try { Open-Url $webUrl } catch {} } }
+            if ($ok) {
+                $readyTimer.Stop()
+                if (-not $script:browserOpened) {
+                    $script:browserOpened = $true
+                    Show-DshNotice(2000, 'DSH', 'DSH Web 已就绪，打开浏览器。', 'Info')
+                    # 记一次真实冷启动耗时，供下次动态阈值使用。双重门（2026-11-08 审查 S1）：
+                    # ① 必须是本进程拉起的服务（附着已有服务时 1-2 秒就"就绪"，那不是冷启动）；
+                    # ② 必须来自真实就绪判定（超时分支记的是阈值本身，写进去会让阈值棘轮式下压）。
+                    if ($script:startedByMe -and -not $script:readyFromTimeout) {
+                        try { if ($script:readyStartWall) { Add-DshReadySample (((Get-Date) - $script:readyStartWall).TotalSeconds) } } catch {}
+                    }
+                    # 打开走既有链路：Open-Url 内部会用 Get-DshOpenUrl（令牌 + 有效性探测）并优先 PWA
+                    try { Open-Url $webUrl } catch {}
+                }
+            }
         } catch {}
     })
     $readyTimer.Start()

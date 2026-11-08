@@ -293,32 +293,92 @@ function Test-SyncRemoteTree {
     }
     return $true
 }
+function Backup-SyncCacheDir {
+    # 缓存目录里可能有未推送的本地提交：删除/重建之前先整目录改名保留（秒级时间戳，不覆盖旧备份）
+    param([string]$Cache)
+    if (-not (Test-Path -LiteralPath $Cache)) { return '' }
+    $bak = $Cache + '.bak-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+    try { Move-Item -LiteralPath $Cache -Destination $bak -Force -ErrorAction Stop; return $bak }
+    catch { return '' }
+}
+$script:LastBackupBranch = ''
+function Save-SyncLocalCommits {
+    # 把缓存里未推送的本地提交备份成带秒级时间戳的分支，再允许重置工作树。
+    # 备份失败直接抛错中止（绝不"先 reset 再说"）。返回分支名（无需备份时返回空串）。
+    param([string]$Cache, [string]$Branch)
+    $ahead = -1
+    try {
+        $o = (& git -C $Cache rev-list --count "refs/remotes/origin/$Branch..HEAD" 2>$null)
+        if ($LASTEXITCODE -eq 0) { $ahead = [int](($o -join '').Trim()) }
+    } catch { $ahead = -1 }
+    if ($ahead -eq 0) { return '' }
+    $name = 'local-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+    $branchOk = $false
+    try {
+        & git -C $Cache branch $name HEAD 2>$null | Out-Null
+        $branchOk = ($LASTEXITCODE -eq 0)
+    } catch { $branchOk = $false }
+    if (-not $branchOk) { throw ('缓存中有未推送提交，但备份分支创建失败；已中止，未重置。分支名：' + $name) }
+    $script:LastBackupBranch = $name
+    $note = if ($ahead -gt 0) { '（领先 ' + $ahead + ' 个提交）' } else { '（提交数未知）' }
+    Write-SyncLog ('本地未推送提交已备份为分支 ' + $name + $note)
+    return $name
+}
+function Write-SyncLog {
+    param([string]$Message)
+    try {
+        $lp = Join-Path $env:TEMP 'dsh-sync.log'
+        [IO.File]::AppendAllText($lp, ((Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + ' ' + $Message + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding($false)))
+    } catch {}
+}
 function Repair-SyncCache {
     param([string]$Cache, [string]$Branch)
     $parent = Split-Path $Cache -Parent
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
-    if (Test-Path -LiteralPath $Cache -PathType Leaf) { Remove-Item -LiteralPath $Cache -Force -ErrorAction SilentlyContinue }
+    # 2026-11-08 事故修复：原实现在用户确认方向之前直接 reset --hard，把未推送提交抹掉了。
+    # 现在改为：fetch → 先把未推送提交备份成 local-backup-<ts> 分支（失败即中止）→ 才 reset --hard 对齐，
+    # 并 clean -fd 清未跟踪残留。用户技能目录全程不动；取消时提示会点名备份分支。
     if (Test-Path -LiteralPath (Join-Path $Cache '.git')) {
         $ok = $false
         try { git -C $Cache rev-parse --is-inside-work-tree 2>$null | Out-Null; $ok = ($LASTEXITCODE -eq 0) } catch {}
-        if (-not $ok) { Remove-Item -LiteralPath $Cache -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-    if (-not (Test-Path -LiteralPath (Join-Path $Cache '.git'))) {
-        $r = Invoke-SyncGit @('clone', '-b', $Branch, '--depth', '1', "https://github.com/$GhRepo.git", $Cache)
-        if ($r.code -ne 0) { throw (Format-SyncError $r.code $r.text 'git clone') }
-    } else {
-        $r = Invoke-SyncGit @('fetch','origin',"+refs/heads/$Branch:refs/remotes/origin/$Branch") $Cache
-        if ($r.code -ne 0) {
-            Remove-Item -LiteralPath $Cache -Recurse -Force -ErrorAction SilentlyContinue
-            $r = Invoke-SyncGit @('clone', '-b', $Branch, '--depth', '1', "https://github.com/$GhRepo.git", $Cache)
-            if ($r.code -ne 0) { throw (Format-SyncError $r.code $r.text 'git clone（缓存修复后重试）') }
-        } else {
-            $r = Invoke-SyncGit @('reset', '--hard', "refs/remotes/origin/$Branch") $Cache
-            if ($r.code -ne 0) { throw (Format-SyncError $r.code $r.text 'git reset') }
+        if (-not $ok) {
+            $bk = Backup-SyncCacheDir $Cache
+            if (-not $bk) { throw ('缓存仓库不可用，且备份失败；已中止，未删除任何数据：' + $Cache) }
+            Write-SyncLog ('缓存仓库不可用，已备份到 ' + $bk)
         }
     }
-}
-function Publish-SkillZip {
+    if (-not (Test-Path -LiteralPath (Join-Path $Cache '.git'))) {
+        if (Test-Path -LiteralPath $Cache) {
+            $bk = Backup-SyncCacheDir $Cache
+            if (-not $bk) { throw ('缓存目录非空且无 .git，备份失败；已中止，未删除任何数据：' + $Cache) }
+            Write-SyncLog ('缓存目录已备份到 ' + $bk)
+        }
+        $r = Invoke-SyncGit @('clone', '-b', $Branch, '--depth', '1', "https://github.com/$GhRepo.git", $Cache)
+        if ($r.code -ne 0) { throw (Format-SyncError $r.code $r.text 'git clone') }
+        return
+    }
+    $r = Invoke-SyncGit @('fetch','origin',"+refs/heads/$Branch:refs/remotes/origin/$Branch") $Cache
+    if ($r.code -eq 0) {
+        # 2026-11-08：对齐工作树到远端（比对/上传都需要干净起点）。对齐前先备份未推送提交。
+        $null = Save-SyncLocalCommits $Cache $Branch
+        $r0 = Invoke-SyncGit @('reset', '--hard', "refs/remotes/origin/$Branch") $Cache
+        if ($r0.code -ne 0) { throw (Format-SyncError $r0.code $r0.text 'git reset（对齐缓存）') }
+        # 上一轮中止留下的未跟踪残留会被 upload 的 `git add -A` 带进提交，这里清掉。
+        # 不带 -x：.gitignore 里的本地文件（*.bak / install-dir.txt 等）保持不动。
+        $rc = Invoke-SyncGit @('clean', '-fd') $Cache
+        if ($rc.code -ne 0) {
+            Write-SyncLog ('缓存未跟踪残留清理失败：' + $rc.text)
+            Write-SyncStatus 'warning' ('缓存里还有未跟踪残留（清理失败），上传时可能把它们带上：' + $rc.text + '。可手动在缓存目录执行 git clean -fd 后重试。')
+        }
+    }
+    if ($r.code -ne 0) {
+        $bk = Backup-SyncCacheDir $Cache
+        if (-not $bk) { throw ('fetch 失败且备份失败；已中止，未删除任何数据：' + (Format-SyncError $r.code $r.text 'git fetch')) }
+        Write-SyncLog ('fetch 失败，原缓存已备份到 ' + $bk)
+        $r2 = Invoke-SyncGit @('clone', '-b', $Branch, '--depth', '1', "https://github.com/$GhRepo.git", $Cache)
+        if ($r2.code -ne 0) { throw (Format-SyncError $r2.code $r2.text 'git clone（备份后重试）') }
+    }
+}function Publish-SkillZip {
     param([string]$SkillDir, [string]$OutZip, [string]$RootName)
     try { Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop } catch {}
     try { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop } catch {}
@@ -571,11 +631,14 @@ function Sync-LauncherScript {
             } elseif ($dir -eq 'pull') {
                 $chosenDirection = 'pull'
             } else {
-                Write-SyncStatus 'result' '已取消同步，未做任何更改。' @{ action = 'cancelled' }
+                $cancelMsg = '已取消同步：缓存已刷新到远端，本地未推送的提交'
+                if ($script:LastBackupBranch) { $cancelMsg += ('已备份为分支 ' + $script:LastBackupBranch) } else { $cancelMsg += '本来就没有' }
+                Write-SyncStatus 'result' ($cancelMsg + '。') @{ action = 'cancelled' }
                 return
             }
         }
         if ($chosenDirection -eq 'pull') {
+            # 缓存工作树已在 Repair-SyncCache 里对齐到远端（并在对齐前备份了未推送提交），这里不再重复 reset。
             $curDsh = Get-CurrentDshVersion
             if ($rm.compatibleDsh) {
                 $compat = @($rm.compatibleDsh)
@@ -605,9 +668,18 @@ function Sync-LauncherScript {
                 if (Is-SyncIgnored $rel) { return }
                 if ($purgeOk -and -not $remoteMap.ContainsKey($rel)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
             }
-            $setupOut = (& (Join-Path $PSHome 'powershell.exe') -NoProfile -ExecutionPolicy Bypass -File (Join-Path $SkillDir 'assets\setup.ps1') -InstallDir $InstallDir -NoShortcut 2>&1 | ForEach-Object { "$_" }) -join "`n"
-            if ($LASTEXITCODE -ne 0) {
-                Write-SyncStatus 'error' "已从 GitHub 拉取启动脚本（$($rm.version)），但更新后重装失败（setup.ps1 退出码 $LASTEXITCODE），启动器可能未刷新。`n--- setup.ps1 输出 ---`n$setupOut"
+            # PS7 的 $PSHome 里没有 powershell.exe（只有 pwsh.exe），必须回退到系统 Windows PowerShell
+            $psExe = Join-Path $PSHome 'powershell.exe'
+            if (-not (Test-Path -LiteralPath $psExe)) { $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe' }
+            # 5.1 下 EAP=Stop 时原生 stderr 会抛 RemoteException，这里局部降级，避免把"setup 打了警告"误报成同步失败
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $setupOut = (& $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $SkillDir 'assets\setup.ps1') -InstallDir $InstallDir -NoShortcut 2>&1 | ForEach-Object { "$_" }) -join "`n"
+                $setupCode = $LASTEXITCODE
+            } finally { $ErrorActionPreference = $prevEap }
+            if ($setupCode -ne 0) {
+                Write-SyncStatus 'error' "已从 GitHub 拉取启动脚本（$($rm.version)），但更新后重装失败（setup.ps1 退出码 $setupCode），启动器可能未刷新。`n--- setup.ps1 输出 ---`n$setupOut"
                 return
             }
             if (-not $NoRestart) {

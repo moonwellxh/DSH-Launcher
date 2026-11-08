@@ -301,3 +301,48 @@ function Write-DshTrayLog {
     try { $notify.ShowBalloonTip($tms, $Title, $Text, $Icon) }
     catch { [void](Write-DshTrayLog -Level 'WARN' -Event 'notice.balloon_failed' -Fields @{ title = $Title; error = ($_.Exception.GetType().Name + ': ' + $_.Exception.Message) }) }
 }
+function Get-DshReadyTimeoutSec {
+    # "启动 -> 就绪"该等多久：从历史样本算。下限 90、默认 120 都高于实测冷启动 79 秒（2026-11-08 审查 S2）。
+    # 样本 >=3 条：去首尾各 10%（至少各 1）取 P80，乘 1.3，夹在 [90,300]。
+    # 样本 1-2 条：取 max(默认, 现有样本 P80×1.3)，不直接回默认（审查 M1）。
+    $f = Join-Path $PSScriptRoot 'dsh-ready-samples.json'
+    $def = 120
+    if (-not (Test-Path -LiteralPath $f)) { return $def }
+    $all = @()
+    try { $all = @(Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json | ForEach-Object { [double]$_ }) } catch { return $def }
+    $v = @($all | Where-Object { $_ -gt 0 -and $_ -lt 600 } | Sort-Object)
+    if ($v.Count -eq 0) { return $def }
+    if ($v.Count -lt 3) {
+        $sec0 = [int][Math]::Ceiling($v[$v.Count - 1] * 1.3)
+        if ($sec0 -lt $def) { $sec0 = $def }
+        if ($sec0 -gt 300) { $sec0 = 300 }
+        return $sec0
+    }
+    $k = [Math]::Max(1, [int][Math]::Floor($v.Count * 0.1))
+    $core = @($v[$k..($v.Count - 1 - $k)])
+    if ($core.Count -lt 1) { $core = $v }
+    $idx = [int][Math]::Ceiling($core.Count * 0.8) - 1
+    if ($idx -lt 0) { $idx = 0 }
+    $sec = [int][Math]::Ceiling($core[$idx] * 1.3)
+    if ($sec -lt 90) { $sec = 90 }
+    if ($sec -gt 300) { $sec = 300 }
+    return $sec
+}
+function Add-DshReadySample([double]$Seconds) {
+    # 只保留最近 20 条；只收合理区间内的样本（0 < x < 600 秒）
+    if ($Seconds -le 0 -or $Seconds -ge 600) { return }
+    $f = Join-Path $PSScriptRoot 'dsh-ready-samples.json'
+    $arr = @()
+    try { if (Test-Path -LiteralPath $f) { $arr = @(Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json | ForEach-Object { [double]$_ }) } } catch { $arr = @() }
+    $arr += [Math]::Round($Seconds, 1)
+    if ($arr.Count -gt 20) { $arr = @($arr[($arr.Count - 20)..($arr.Count - 1)]) }
+    # 原子写（审查 M3）：先写临时文件再替换，避免托盘被 Force 杀掉时留下半截 JSON
+    $tmpf = $f + '.tmp'
+    try {
+        ($arr | ConvertTo-Json -Compress) | Set-Content -LiteralPath $tmpf -Encoding utf8 -Force
+        Move-Item -LiteralPath $tmpf -Destination $f -Force
+    } catch {
+        try { [void](Write-DshTrayLog -Level 'WARN' -Event 'ready.sample_write_fail' -Fields @{ error = $_.Exception.Message }) } catch {}
+        try { Remove-Item -LiteralPath $tmpf -Force -ErrorAction SilentlyContinue } catch {}
+    }
+}
